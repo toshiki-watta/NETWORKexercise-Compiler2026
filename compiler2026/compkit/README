@@ -1,0 +1,77 @@
+「情報工学実験I P1 コンパイラの作成」実験用キット
+Copyright (C) 1996-2005 Toyohashi University of Technology
+
+
+・ ファイル一覧
+
+	README		このファイル
+	ChangeLog	更新履歴
+	Makefile	makefile
+	getsym.c	字句解析ルーチン getsym() のソースファイル
+	getsym.h	getsym() を利用するのに必要なヘッダファイル
+	asm.pl		目的計算機用アセンブラのソースファイル
+	sr/		目的計算機用シミュレータのソースのあるディレクトリ
+
+
+・ インストール方法
+
+   1) Makefile 中の変数 PREFIX 等を，各自の環境に合わせる．
+
+	PREFIX		キットがインストールされるベースディレクトリ。
+			デフォルトでは $(HOME)/p1
+
+	BINDIR		asm および sr がインストールされるディレクトリ。
+			デフォルトでは $(PREFIX)/bin
+
+	LIBDIR		libics.a （getsym を含む）がインストールされる
+			ディレクトリ。
+			デフォルトでは $(PREFIX)/lib
+
+	INCDIR		getsym.h がインストールされるディレクトリ。
+			デフォルトでは $(PREFIX)/include
+
+   2) make コマンドを実行する．
+
+
+・ 使用方法
+   
+   - getsym の使用
+
+     コンパイラソース中で getsym.h を include し，コンパイラ生成時に
+     libics.a を link する。LIBDIR が ${HOME}/p1/lib，INCDIR が
+     ${HOME}/p1/include とすると，オブジェクトファイル .o 生成時に
+
+	-I${HOME}/p1/include
+
+     リンク時に
+
+	-L${HOME}/p1/lib -lics
+
+     などとして gcc を使用すればよい。
+
+
+   - asm の使用
+
+     ${HOME}/p1/bin に install される。絶対パスで指定して起動するか，
+     shell の設定ファイル (~/.tcshrc など) で，${HOME}/p1/bin に
+     パスを通しておくことで利用できる。
+
+     アセンブリプログラムを入力すると，標準出力にオブジェクトコードを
+     出力するので，これをファイルにリダイレクトする。
+
+	asm sample.asm > sample.sr
+
+   - sr の使用
+
+     asm と同じくパスを指定すれば利用できる。
+
+     asm が出力したオブジェクトコードを指定して実行すると，シミュレータ
+     での実行結果と実行時間が標準出力に出力される。
+
+	sr sample.sr
+
+     asm の結果をファイルを介さずに sr に渡してもよい。
+
+     	asm sample.asm | sr
+
+

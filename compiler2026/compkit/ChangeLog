@@ -1,0 +1,19 @@
+2005-12-05	Tomoaki TSUMURA <tsumura@ics.tut.ac.jp>
+
+	* Makefile: avoid using absolute path for perl.
+	use gcc as CC.
+	* history: discarded.
+	* ChangeLog: added.
+	* README: added `how to use' section.
+
+2002-06-05	Kazuhiko OHNO
+
+	* Copyright表記を追加。
+	* proc.c: シグナルハンドラ関数の形式をLinuxに合わせて修正。
+	illegal_insn_entryのバグを修正。
+	* sample.asm: 追加。
+
+1996-XX-XX	X
+
+	* 第1版
+
