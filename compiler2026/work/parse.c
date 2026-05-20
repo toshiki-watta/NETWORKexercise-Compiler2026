@@ -14,6 +14,13 @@ extern FILE *outfile;
 void error(char *s);
 void statement(void);
 void outblock(void);
+static void expression(void);
+static void term(void);
+static void factor(void);
+static int new_temp(void);
+
+static int fits_immed(int v);
+static void emit_load_const_to_reg(int reg, int val);
 
 void compiler(void){
 	init_getsym();
@@ -56,65 +63,118 @@ void error(char *s){
 // Parser
 //
 
-/* 左辺または即値を r0 に評価して tok を次へ進める */
-/* 複合式を r0 に評価*/
+/* 簡易一時確保: __tmp0, __tmp1 ... を symtab に登録してインデックスを返す */
+static int new_temp(void){
+    static int tmpcnt = 0;
+    char tmpname[MAXIDLEN+1];
+    int idx;
+    snprintf(tmpname, sizeof(tmpname), "__tmp%d", tmpcnt++);
+    idx = sym_install(tmpname);
+    return idx;
+}
+
+/* 互換用ラッパー（古い呼び出し箇所がある場合）*/
 static void eval_to_r0(void){
-    /* 最初のオペランド */
+    expression();
+}
+
+/* factor -> IDENTIFIER | NUMBER | '(' expression ')' */
+static void factor(void){
     if (tok.attr == IDENTIFIER) {
         int idx = sym_lookup(tok.charvalue);
         if (idx == -1) error("未定義の変数です。");
         fprintf(outfile, "load r0, %d\n", idx);
         getsym();
     } else if (tok.attr == NUMBER) {
-        fprintf(outfile, "loadi r0, %d\n", tok.value);
+        /* 大きな即値は emit_load_const_to_reg() に任せる */
+        emit_load_const_to_reg(0, tok.value); /* r0 に定数を生成 */
         getsym();
+    } else if (tok.attr == SYMBOL && tok.value == LPAREN) {
+        getsym(); /* '(' を消費 */
+        expression();
+        if (!(tok.attr == SYMBOL && tok.value == RPAREN)) error(") が必要です。");
+        getsym(); /* ')' を消費 */
     } else {
-        error("式の評価で識別子か数が必要です。");
+        error("factor に識別子・数・'(' が必要です。");
     }
+}
 
-    /* オプションの二項演算*/
-    if ((tok.attr == SYMBOL && (tok.value == TIMES || tok.value == PLUS || tok.value == MINUS)) ||
-        (tok.attr == RWORD && tok.value == DIV)) {
-        int op = tok.value;
-        int opattr = tok.attr;
-        getsym(); /* 演算子を消費 */
+/* term -> factor { (* | div ) factor } */
+static void term(void){
+    factor(); /* left -> r0 */
+    for (;;) {
+        if ((tok.attr == SYMBOL && tok.value == TIMES) ||
+            (tok.attr == RWORD && tok.value == DIV)) {
+            int op = tok.value;
+            int opattr = tok.attr;
+            getsym(); /* 演算子消費 */
 
-        if (tok.attr == NUMBER) {
-            if (opattr == SYMBOL) {
-                if (op == TIMES) fprintf(outfile, "muli r0, %d\n", tok.value);
-                else if (op == PLUS) fprintf(outfile, "addi r0, %d\n", tok.value);
-                else if (op == MINUS) fprintf(outfile, "subi r0, %d\n", tok.value);
-            } else { /* DIV だけ別でやる必要がある*/
-                fprintf(outfile, "divi r0, %d\n", tok.value);
-            }
-            getsym();
-        } else if (tok.attr == IDENTIFIER) {
-            int rhs = sym_lookup(tok.charvalue);
-            if (rhs == -1) error("右辺の変数が未定義です。");
-            fprintf(outfile, "load r1, %d\n", rhs);
-            if (opattr == SYMBOL) {
-                if (op == TIMES) fprintf(outfile, "mulr r0, r1\n");
-                else if (op == PLUS) fprintf(outfile, "addr r0, r1\n");
-                else if (op == MINUS) fprintf(outfile, "subr r0, r1\n");
+            if (tok.attr == NUMBER) {
+                if (fits_immed(tok.value)) {
+                    if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "muli r0, %d\n", tok.value);
+                    else fprintf(outfile, "divi r0, %d\n", tok.value);
+                } else {
+                    /* 大きい即値: r1 に作ってレジスタ演算 */
+                    emit_load_const_to_reg(1, tok.value);
+                    if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r0, r1\n");
+                    else fprintf(outfile, "divr r0, r1\n");
+                }
+                getsym();
+            } else if (tok.attr == IDENTIFIER) {
+                int rhs = sym_lookup(tok.charvalue);
+                if (rhs == -1) error("右辺の変数が未定義です。");
+                fprintf(outfile, "load r1, %d\n", rhs);
+                if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r0, r1\n");
+                else fprintf(outfile, "divr r0, r1\n");
+                getsym();
             } else {
-                fprintf(outfile, "divr r0, r1\n");
+                /* 複雑な RHS: 左を一時保存して RHS を評価し結合する */
+                int tmp = new_temp();
+                fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+                factor(); /* RHS -> r0 */
+                fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+                if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r1, r0\n");
+                else fprintf(outfile, "divr r1, r0\n");
+                fprintf(outfile, "store r1, %d\n", tmp);
+                fprintf(outfile, "load r0, %d\n", tmp); /* 結果 -> r0 */
             }
-            getsym();
-        } else {
-            error("演算子の右辺が不正です。");
+            continue;
         }
+        break;
+    }
+}
+
+/* expression -> term { (+ | -) term } */
+static void expression(void){
+    term(); /* left -> r0 */
+    while (tok.attr == SYMBOL && (tok.value == PLUS || tok.value == MINUS)) {
+        int op = tok.value;
+        int tmp = new_temp();
+        fprintf(outfile, "store r0, %d\n", tmp); /* save left */
+        getsym(); /* consume + or - */
+        term();  /* parse entire RHS into r0 */
+        fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+        if (op == PLUS) fprintf(outfile, "addr r1, r0\n");
+        else fprintf(outfile, "subr r1, r0\n");
+        fprintf(outfile, "store r1, %d\n", tmp);
+        fprintf(outfile, "load r0, %d\n", tmp); /* result -> r0 */
     }
 }
 
 /* 右辺を r0/r1 に評価して比較命令を出力する。比較演算子を返す。 */
 static int emit_compare_and_consume(void){
     int op = tok.value; /* 比較演算子を保持 */
-    /* op は現在の tok（演算子）であるはず */
-    getsym(); /* 演算子の次、右辺へ */
+    getsym(); /* 演算子を消費して RHS の先頭へ */
 
     if (tok.attr == NUMBER) {
-        fprintf(outfile, "cmpi r0, %d\n", tok.value);
-        getsym();
+        if (fits_immed(tok.value)) {
+            fprintf(outfile, "cmpi r0, %d\n", tok.value);
+            getsym();
+        } else {
+            emit_load_const_to_reg(1, tok.value); /* r1 に定数 */
+            fprintf(outfile, "cmpr r0, r1\n");
+            getsym();
+        }
     } else if (tok.attr == IDENTIFIER) {
         int rhs = sym_lookup(tok.charvalue);
         if (rhs == -1) error("右辺の変数が未定義です。");
@@ -122,7 +182,12 @@ static int emit_compare_and_consume(void){
         fprintf(outfile, "cmpr r0, r1\n");
         getsym();
     } else {
-        error("比較の右辺が不正です。");
+        /* 複雑な RHS：左を一時保存して expression() で評価 */
+        int tmp = new_temp();
+        fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+        expression(); /* RHS -> r0 */
+        fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+        fprintf(outfile, "cmpr r1, r0\n");      /* compare left,right */
     }
     return op;
 }
@@ -220,36 +285,6 @@ void statement(void){
         /* 右辺を r0 に評価　*/
         eval_to_r0();
 
-        /* 二項四則演算が続けば追加生成 */
-        if ((tok.attr == SYMBOL && (tok.value == TIMES || tok.value == PLUS || tok.value == MINUS)) ||
-            (tok.attr == RWORD && tok.value == DIV)) {
-            int op = tok.value;
-            int opattr = tok.attr;
-            getsym(); /* 演算子を消費 */
-            if (tok.attr == NUMBER) {
-                if (opattr == SYMBOL) {
-                    if (op == TIMES) fprintf(outfile, "muli r0, %d\n", tok.value);
-                    else if (op == PLUS) fprintf(outfile, "addi r0, %d\n", tok.value);
-                    else if (op == MINUS) fprintf(outfile, "subi r0, %d\n", tok.value);
-                } else { /* DIV */
-                    fprintf(outfile, "divi r0, %d\n", tok.value);
-                }
-                getsym(); /* 右辺即値を消費 */
-            } else if (tok.attr == IDENTIFIER) {
-                int rhs2 = sym_lookup(tok.charvalue);
-                if (rhs2 == -1) error("右辺の変数が未定義です。");
-                fprintf(outfile, "load r1, %d\n", rhs2);
-                if (opattr == SYMBOL) {
-                    if (op == TIMES) fprintf(outfile, "mulr r0, r1\n");
-                    else if (op == PLUS) fprintf(outfile, "addr r0, r1\n");
-                    else if (op == MINUS) fprintf(outfile, "subr r0, r1\n");
-                } else {
-                    fprintf(outfile, "divr r0, r1\n");
-                }
-                getsym(); /* 右辺識別子を消費 */
-            } else error("演算子の右辺が不正です。");
-        }
-
         /* 計算結果を左辺のアドレスへ格納 */
         fprintf(outfile, "store r0, %d\n", lhs);
 
@@ -260,9 +295,15 @@ void statement(void){
         eval_to_r0();
 
         /* 比較演算子のチェックと右辺評価 */
-        if (!(tok.attr == SYMBOL || tok.attr == RWORD)) error("条件の比較演算子が必要です。");
+        if (!(tok.attr == SYMBOL &&
+              (tok.value == EQL || tok.value == NOTEQL || tok.value == LESSTHAN ||
+               tok.value == LESSEQL || tok.value == GRTRTHAN || tok.value == GRTREQL)))
+    error("条件の比較演算子が必要です。");
         int op = emit_compare_and_consume();
 
+
+        printf("%d\n", tok.attr);
+        printf("%d\n", tok.value);
         if (!(tok.attr == RWORD && tok.value == THEN)) error("then が必要です。");
         getsym(); /* 'then' を消費 */
 
@@ -337,4 +378,32 @@ void statement(void){
     if (is_outer) {
         fprintf(outfile, "halt\n");
     }
+}
+
+static int fits_immed(int v){
+    return (v > -(1<<16) && v < (1<<16)); /* asm の half() チェックに合わせる */
+}
+
+static void emit_load_const_to_reg(int reg, int val){
+    const char *r = (reg == 0) ? "r0" : "r1";
+    if (fits_immed(val)){
+        fprintf(outfile, "loadi %s, %d\n", r, val);
+        return;
+    }
+    /* 単純因数分解で val = a * b を探して a,b が即値で出せるなら生成 */
+    int absval = val < 0 ? -val : val;
+    int a = 0, b = 0;
+    for (int i = 2; i <= 65535 && i <= absval; ++i) {
+        if (absval % i == 0) {
+            int j = absval / i;
+            if (j < (1<<16)) { a = i; b = j; break; }
+        }
+    }
+    if (a) {
+        if (val < 0) fprintf(outfile, "loadi %s, -%d\n", r, a);
+        else fprintf(outfile, "loadi %s, %d\n", r, a);
+        fprintf(outfile, "muli %s, %d\n", r, b);
+        return;
+    }
+    error("定数が大きすぎて処理できません。");
 }
