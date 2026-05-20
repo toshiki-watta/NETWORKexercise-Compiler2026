@@ -1,6 +1,7 @@
 #include <string.h>
 #include <getsym.h>
 #include "symtab.h"
+#include <stdio.h> /* fprintf */
 
 #define MAXSYMS 32
 
@@ -29,4 +30,13 @@ int sym_install(const char *name){
     strcpy(s_table[s_count].v, name);
     s_table[s_count].addr = s_count;
     return s_count++;
+}
+
+void sym_dump(void){
+    int i;
+    fprintf(stderr, "=== sym_dump (count=%d) ===\n", s_count);
+    for (i = 0; i < s_count; ++i){
+        fprintf(stderr, "  [%2d] name=\"%s\" addr=%d\n", i, s_table[i].v, s_table[i].addr);
+    }
+    fprintf(stderr, "===========================\n");
 }

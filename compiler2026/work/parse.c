@@ -41,6 +41,9 @@ void compiler(void){
 
 				outblock();
 
+                /* 変数登録の直後にシンボルテーブルをダンプ（デバッグ用） */
+                sym_dump();
+
 				// // チェックよう
 				// printf("Current token: attr=%d, value=%d\n", tok.attr, tok.value);
 
@@ -218,8 +221,6 @@ void outblock(void){
     /* outblock 終了時点で tok は次の文（通常 BEGIN など）の先頭を指す */
 }
 
-
-
 void statement(void){
     static int depth = 0;
     int is_outer = (depth == 0); /* 外側からの呼び出しかどうか */
@@ -381,7 +382,7 @@ void statement(void){
 }
 
 static int fits_immed(int v){
-    return (v > -(1<<16) && v < (1<<16)); /* asm の half() チェックに合わせる */
+    return (v >= -(1<<15) && v <= (1<<15)-1); /* -32768..32767 */
 }
 
 static void emit_load_const_to_reg(int reg, int val){
@@ -390,13 +391,12 @@ static void emit_load_const_to_reg(int reg, int val){
         fprintf(outfile, "loadi %s, %d\n", r, val);
         return;
     }
-    /* 単純因数分解で val = a * b を探して a,b が即値で出せるなら生成 */
     int absval = val < 0 ? -val : val;
     int a = 0, b = 0;
-    for (int i = 2; i <= 65535 && i <= absval; ++i) {
+    for (int i = 2; i <= 32767 && i <= absval; ++i) {
         if (absval % i == 0) {
             int j = absval / i;
-            if (j < (1<<16)) { a = i; b = j; break; }
+            if (j <= 32767) { a = i; b = j; break; }
         }
     }
     if (a) {

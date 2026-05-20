@@ -31,11 +31,11 @@ store r1, 10
 load r0, 10
 load r1, 3
 mulr r0, r1
-loadi r1, 2
-muli r1, 50000
+loadi r1, 4
+muli r1, 25000
 divr r0, r1
-loadi r1, 2
-muli r1, 50000
+loadi r1, 4
+muli r1, 25000
 mulr r0, r1
 load r1, 9
 subr r1, r0
@@ -67,11 +67,11 @@ store r1, 13
 load r0, 13
 load r1, 3
 mulr r0, r1
-loadi r1, 2
-muli r1, 50000
+loadi r1, 4
+muli r1, 25000
 divr r0, r1
-loadi r1, 2
-muli r1, 50000
+loadi r1, 4
+muli r1, 25000
 mulr r0, r1
 load r1, 12
 subr r1, r0
@@ -95,8 +95,8 @@ load r1, 14
 addr r1, r0
 store r1, 14
 load r0, 14
-loadi r1, 16
-muli r1, 62500
+loadi r1, 32
+muli r1, 31250
 cmpr r0, r1
 jge L2
 load r0, 5
