@@ -41,7 +41,7 @@ void compiler(void){
 
 				outblock();
 
-                /* 変数登録の直後にシンボルテーブルをダンプ（デバッグ用） */
+                /* 変数登録の直後にシンボルテーブルをダンプ*/
                 sym_dump();
 
 				// // チェックよう
@@ -76,7 +76,7 @@ static int new_temp(void){
     return idx;
 }
 
-/* 互換用ラッパー（古い呼び出し箇所がある場合）*/
+/* 互換用ラッパー*/
 static void eval_to_r0(void){
     expression();
 }
