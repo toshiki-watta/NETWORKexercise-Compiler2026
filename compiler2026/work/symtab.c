@@ -3,7 +3,7 @@
 #include "symtab.h"
 #include <stdio.h> /* fprintf */
 
-#define MAXSYMS 32
+#define MAXSYMS 256
 
 typedef struct {
     int addr;

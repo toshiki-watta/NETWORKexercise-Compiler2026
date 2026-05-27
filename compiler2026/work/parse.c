@@ -14,9 +14,9 @@ extern FILE *outfile;
 void error(char *s);
 void statement(void);
 void outblock(void);
-static void expression(void);
-static void term(void);
-static void factor(void);
+static void parse_expression_bottomup(void);
+// static void term(void);
+// static void factor(void);
 static int new_temp(void);
 
 static int fits_immed(int v);
@@ -76,93 +76,116 @@ static int new_temp(void){
     return idx;
 }
 
-/* 互換用ラッパー*/
+/* ラッパー*/
 static void eval_to_r0(void){
-    expression();
+    parse_expression_bottomup();
 }
 
-/* factor -> IDENTIFIER | NUMBER | '(' expression ')' */
-static void factor(void){
-    if (tok.attr == IDENTIFIER) {
-        int idx = sym_lookup(tok.charvalue);
-        if (idx == -1) error("未定義の変数です。");
-        fprintf(outfile, "load r0, %d\n", idx);
-        getsym();
-    } else if (tok.attr == NUMBER) {
-        /* 大きな即値は emit_load_const_to_reg() に任せる */
-        emit_load_const_to_reg(0, tok.value); /* r0 に定数を生成 */
-        getsym();
-    } else if (tok.attr == SYMBOL && tok.value == LPAREN) {
-        getsym(); /* '(' を消費 */
-        expression();
-        if (!(tok.attr == SYMBOL && tok.value == RPAREN)) error(") が必要です。");
-        getsym(); /* ')' を消費 */
-    } else {
-        error("factor に識別子・数・'(' が必要です。");
-    }
-}
+/* これ以下はトップダウンの時のコメントアウト　*/
 
-/* term -> factor { (* | div ) factor } */
-static void term(void){
-    factor(); /* left -> r0 */
-    for (;;) {
-        if ((tok.attr == SYMBOL && tok.value == TIMES) ||
-            (tok.attr == RWORD && tok.value == DIV)) {
-            int op = tok.value;
-            int opattr = tok.attr;
-            getsym(); /* 演算子消費 */
+// /* factor -> IDENTIFIER | NUMBER | '(' expression ')' */
+// static void factor(void){
+//     if (tok.attr == IDENTIFIER) {
+//         int idx = sym_lookup(tok.charvalue);
+//         if (idx == -1) error("未定義の変数です。");
+//         fprintf(outfile, "load r0, %d\n", idx);
+//         getsym();
+//     } else if (tok.attr == NUMBER) {
+//         /* 大きな即値は emit_load_const_to_reg() に任せる */
+//         emit_load_const_to_reg(0, tok.value); /* r0 に定数を生成 */
+//         getsym();
+//     } else if (tok.attr == SYMBOL && tok.value == LPAREN) {
+//         getsym(); /* '(' を消費 */
+//         expression();
+//         if (!(tok.attr == SYMBOL && tok.value == RPAREN)) error(") が必要です。");
+//         getsym(); /* ')' を消費 */
+//     } else {
+//         error("factor に識別子・数・'(' が必要です。");
+//     }
+// }
 
-            if (tok.attr == NUMBER) {
-                if (fits_immed(tok.value)) {
-                    if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "muli r0, %d\n", tok.value);
-                    else fprintf(outfile, "divi r0, %d\n", tok.value);
-                } else {
-                    /* 大きい即値: r1 に作ってレジスタ演算 */
-                    emit_load_const_to_reg(1, tok.value);
-                    if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r0, r1\n");
-                    else fprintf(outfile, "divr r0, r1\n");
-                }
-                getsym();
-            } else if (tok.attr == IDENTIFIER) {
-                int rhs = sym_lookup(tok.charvalue);
-                if (rhs == -1) error("右辺の変数が未定義です。");
-                fprintf(outfile, "load r1, %d\n", rhs);
-                if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r0, r1\n");
-                else fprintf(outfile, "divr r0, r1\n");
-                getsym();
-            } else {
-                /* 複雑な RHS: 左を一時保存して RHS を評価し結合する */
-                int tmp = new_temp();
-                fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
-                factor(); /* RHS -> r0 */
-                fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
-                if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r1, r0\n");
-                else fprintf(outfile, "divr r1, r0\n");
-                fprintf(outfile, "store r1, %d\n", tmp);
-                fprintf(outfile, "load r0, %d\n", tmp); /* 結果 -> r0 */
-            }
-            continue;
-        }
-        break;
-    }
-}
+// /* term -> factor { (* | div ) factor } */
+// static void term(void){
+//     factor(); /* left -> r0 */
+//     for (;;) {
+//         if ((tok.attr == SYMBOL && tok.value == TIMES) ||
+//             (tok.attr == RWORD && tok.value == DIV)) {
+//             int op = tok.value;
+//             int opattr = tok.attr;
+//             getsym(); /* 演算子消費 */
 
-/* expression -> term { (+ | -) term } */
-static void expression(void){
-    term(); /* left -> r0 */
-    while (tok.attr == SYMBOL && (tok.value == PLUS || tok.value == MINUS)) {
-        int op = tok.value;
-        int tmp = new_temp();
-        fprintf(outfile, "store r0, %d\n", tmp); /* save left */
-        getsym(); /* consume + or - */
-        term();  /* parse entire RHS into r0 */
-        fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
-        if (op == PLUS) fprintf(outfile, "addr r1, r0\n");
-        else fprintf(outfile, "subr r1, r0\n");
-        fprintf(outfile, "store r1, %d\n", tmp);
-        fprintf(outfile, "load r0, %d\n", tmp); /* result -> r0 */
-    }
-}
+//             if (tok.attr == NUMBER) {
+//                 if (fits_immed(tok.value)) {
+//                     if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "muli r0, %d\n", tok.value);
+//                     else fprintf(outfile, "divi r0, %d\n", tok.value);
+//                 } else {
+//                     /* 大きい即値: r1 に作ってレジスタ演算 */
+//                     emit_load_const_to_reg(1, tok.value);
+//                     if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r0, r1\n");
+//                     else fprintf(outfile, "divr r0, r1\n");
+//                 }
+//                 getsym();
+//             } else if (tok.attr == IDENTIFIER) {
+//                 int rhs = sym_lookup(tok.charvalue);
+//                 if (rhs == -1) error("右辺の変数が未定義です。");
+//                 fprintf(outfile, "load r1, %d\n", rhs);
+//                 if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r0, r1\n");
+//                 else fprintf(outfile, "divr r0, r1\n");
+//                 getsym();
+//             } else {
+//                 /* 複雑な RHS: 左を一時保存して RHS を評価し結合する */
+//                 int tmp = new_temp();
+//                 fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+//                 factor(); /* RHS -> r0 */
+//                 fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+//                 if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r1, r0\n");
+//                 else fprintf(outfile, "divr r1, r0\n");
+//                 fprintf(outfile, "store r1, %d\n", tmp);
+//                 fprintf(outfile, "load r0, %d\n", tmp); /* 結果 -> r0 */
+//             }
+//             continue;
+//         }
+//         break;
+//     }
+// }
+
+// /* expression -> term { (+ | -) term } */
+// static void expression(void){
+//     term(); /* left -> r0 */
+//     while (tok.attr == SYMBOL && (tok.value == PLUS || tok.value == MINUS)) {
+//         int op = tok.value;
+//         int tmp = new_temp();
+//         fprintf(outfile, "store r0, %d\n", tmp); /* save left */
+//         getsym(); /* consume + or - */
+//         term();  /* parse entire RHS into r0 */
+//         fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+//         if (op == PLUS) fprintf(outfile, "addr r1, r0\n");
+//         else fprintf(outfile, "subr r1, r0\n");
+//         fprintf(outfile, "store r1, %d\n", tmp);
+//         fprintf(outfile, "load r0, %d\n", tmp); /* result -> r0 */
+//     }
+// }
+
+
+// /* Bottom-up で expression を評価するための前方宣言と実装 */
+// static void parse_expression_bottomup(void){
+//     /* ここでは expression -> term { (+|-) term } を bottom-up で処理する。
+//        まず最初の term を評価して r0 に置き、次のトークンが + または - ならループで処理する。 */
+//     while (tok.attr == SYMBOL && (tok.value == PLUS || tok.value == MINUS)) {
+//         int op = tok.value;
+//         int tmp = new_temp();
+//         fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+//         getsym(); /* + または - を消費 */
+//         term(); /* 次の term -> r0 */
+//         fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+//         if (op == PLUS) fprintf(outfile, "addr r1, r0\n");
+//         else fprintf(outfile, "subr r1, r0\n");
+//         fprintf(outfile, "store r1, %d\n", tmp);
+//         fprintf(outfile, "load r0, %d\n", tmp); /* 結果 -> r0 */
+//     }
+// }
+
+
 
 /* 右辺を r0/r1 に評価して比較命令を出力する。比較演算子を返す。 */
 static int emit_compare_and_consume(void){
@@ -188,7 +211,7 @@ static int emit_compare_and_consume(void){
         /* 複雑な RHS：左を一時保存して expression() で評価 */
         int tmp = new_temp();
         fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
-        expression(); /* RHS -> r0 */
+        parse_expression_bottomup(); /* RHS -> r0 */
         fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
         fprintf(outfile, "cmpr r1, r0\n");      /* compare left,right */
     }
@@ -406,4 +429,213 @@ static void emit_load_const_to_reg(int reg, int val){
         return;
     }
     error("定数が大きすぎて処理できません。");
+}
+
+/* 演算子種別に対応するインデックス */
+enum {
+    OP_PLUS,    /* + */
+    OP_MINUS,   /* - */
+    OP_TIMES,   /* * */
+    OP_DIV,     /* div */
+    OP_UNARY,   /* 単項- ！*/
+    OP_LPAREN,  /* ( */
+    OP_RPAREN,  /* ) */
+    OP_IDENT,   /* i */
+    OP_END,     /* $ 式終端 */
+    OP_NUMOPS
+};
+
+/* rank_f, rank_g （指導書の表に合わせた値）*/
+static const int rank_f[OP_NUMOPS] = {
+    2,  /* + */
+    2,  /* - */
+    4,  /* * */
+    4,  /* div */
+    6,  /* 単項 - ( ! ) */
+    0,  /* ( */
+    11, /* ) */
+    11, /* i */
+    0   /* $ */
+};
+
+static const int rank_g[OP_NUMOPS] = {
+    1,  /* + */
+    1,  /* - */
+    3,  /* * */
+    3,  /* div */
+    15, /* 単項 - ( ! ) */
+    10, /* ( */
+    0,  /* ) */
+    10, /* i */
+    0   /* $ */
+};
+
+/* スタック風定義 */
+#define OP_STACK_SIZE 256
+#define VAL_STACK_SIZE 256
+
+static int op_stack[OP_STACK_SIZE];
+static int op_top = -1;
+
+static int val_stack[VAL_STACK_SIZE]; /* 被演算子はsymtab のインデックスを積む */
+static int val_top = -1;
+
+/* op_stack 操作 */
+static void push_op(int o){
+    if (op_top >= OP_STACK_SIZE-1) error("演算子スタックオーバーフロー");
+    op_stack[++op_top] = o;
+}
+static int pop_op(void){
+    if (op_top < 0) error("演算子スタックアンダーフロー");
+    return op_stack[op_top--];
+}
+static int top_op(void){
+    if (op_top < 0) return OP_END;
+    return op_stack[op_top];
+}
+
+/* val_stack 操作 */
+static void push_val(int v){
+    if (val_top >= VAL_STACK_SIZE-1) error("被演算子スタックオーバーフロー");
+    val_stack[++val_top] = v;
+}
+static int pop_val(void){
+    if (val_top < 0) error("被演算子スタックアンダーフロー");
+    return val_stack[val_top--];
+}
+
+/* トークンが式の終端（演算子ではない）なら OP_END を返す */
+static int token_to_inop(int expect_operand){
+    if (tok.attr == SYMBOL){
+        switch(tok.value){
+            case PLUS:  return OP_PLUS;
+            case MINUS: return expect_operand ? OP_UNARY : OP_MINUS;
+            case TIMES: return OP_TIMES;
+            case LPAREN: return OP_LPAREN;
+            case RPAREN: return OP_RPAREN;
+            default:    return OP_END; /* ; , then do などは式終り扱い */
+        }
+    } else if (tok.attr == RWORD && tok.value == DIV){
+        return OP_DIV;
+    } else {
+        return OP_END;
+    }
+}
+
+static const char *op_names[OP_NUMOPS] = {
+    "+", "-", "*", "div", "unary-", "(", ")", "i", "$"
+};
+
+static const char *op_name(int op){
+    if (op >= 0 && op < OP_NUMOPS) return op_names[op];
+    return "unknown";
+}
+
+/* 数字は常に一時メモリアドレスを積む */
+static void parse_expression_bottomup(void){
+    /* 初期化 */
+    op_top = val_top = -1;
+    push_op(OP_END); /* 番兵 */
+    int expect_operand = 1; /* 式先頭/'(' の直後はオペランドをまつ */
+
+    for (;;) {
+        /* 数値の処理：読んで一時的にスタックへ */
+        if (tok.attr == IDENTIFIER) {
+            int v = sym_lookup(tok.charvalue);
+            if (v == -1) error("未定義の変数です。");
+            int tmp = new_temp();
+            fprintf(outfile, "load r0, %d\n", v);
+            fprintf(outfile, "store r0, %d\n", tmp);
+            push_val(tmp);
+            getsym();
+            expect_operand = 0;
+            continue;
+        }
+        if (tok.attr == NUMBER) {
+            int tmp = new_temp();
+            emit_load_const_to_reg(0, tok.value); /* r0 に値 */
+            fprintf(outfile, "store r0, %d\n", tmp);
+            push_val(tmp);
+            getsym();
+            expect_operand = 0;
+            continue;
+        }
+
+        /* 入力側の演算子に変換（式終端なら OP_END） */
+        int in_op = token_to_inop(expect_operand);
+        int top = top_op();
+
+        /* 優先度比較 */
+        int f = rank_f[top];
+        int g = rank_g[in_op];
+
+        if (f < g) {
+            /* シフト：入力演算子をスタックに積んでトークンを進める */
+            push_op(in_op);
+            /* '(' や 単項は次にオペランドをまつ */
+            if (in_op == OP_LPAREN || in_op == OP_UNARY) expect_operand = 1;
+            else expect_operand = 1;
+            /* 演算子トークンを消費（OP_END のときは消費しない） */
+            if (in_op != OP_END) getsym();
+            continue;
+        } else if (f > g) {
+            /* 還元：スタックから演算子を取り出し、数字を取り出してプッシュ */
+            int op = pop_op();
+            if (op == OP_UNARY) {
+                /* 単項マイナス: 1オペランド */
+                if (val_top < 0) error("単項演算子の被演算子が不足しています。");
+                int a = pop_val();
+                fprintf(outfile, "load r0, %d\n", a);
+                /* r0 = -r0 を作る（安全のため r1 に -1 を作って乗算） */
+                emit_load_const_to_reg(1, -1);
+                fprintf(outfile, "mulr r0, r1\n");
+                int tmp = new_temp();
+                fprintf(outfile, "store r0, %d\n", tmp);
+                push_val(tmp);
+            } else {
+                /* 二項演算 */
+                if (val_top < 1) error("二項演算子の被演算子が不足しています。");
+                int right = pop_val();
+                int left  = pop_val();
+                fprintf(outfile, "load r0, %d\n", left);
+                fprintf(outfile, "load r1, %d\n", right);
+                switch(op){
+                    case OP_PLUS:  fprintf(outfile, "addr r0, r1\n"); break;
+                    case OP_MINUS: fprintf(outfile, "subr r0, r1\n"); break;
+                    case OP_TIMES: fprintf(outfile, "mulr r0, r1\n"); break;
+                    case OP_DIV:   fprintf(outfile, "divr r0, r1\n"); break;
+                    default:
+                        /* 想定外の演算子がポップされたデバッグ出力 */
+                        // なんでこうなんねん
+                        fprintf(stderr, "reduce: unexpected op=%s (%d)\n", op_name(op), op);
+                        error("不明な演算子で還元しました。");
+                }
+                int tmp = new_temp();
+                fprintf(outfile, "store r0, %d\n", tmp);
+                push_val(tmp);
+            }
+            /* 還元時はトークンを進めず、同じ入力トークンで再比較する */
+            expect_operand = 0;
+            continue;
+        } else {
+            /* f == g の場合：括弧の消去や終了 */
+            if (top == OP_LPAREN && in_op == OP_RPAREN) {
+                pop_op();   /* '(' を取り出して消去 */
+                getsym();   /* ')' を消費 */
+                expect_operand = 0;
+                continue;
+            } else if (top == OP_END && in_op == OP_END) {
+                /* 式の終了 */
+                break;
+            } else {
+                fprintf(stderr, "reduce: unexpected op=%s (%d)\n", op_name(top), top);
+                error("優先度の等価ケースが未定義です（構文エラー）。");
+            }
+        }
+    }
+
+    /* 終了時：val_stack のトップを r0 に */
+    if (val_top < 0) error("空の式です。");
+    int final_addr = pop_val();
+    fprintf(outfile, "load r0, %d\n", final_addr);
 }
