@@ -257,7 +257,7 @@ void outblock(void){
     }
     /* outblock 終了時点で tok は次の文（通常 BEGIN など）の先頭を指す */
 
-    // procedure 宣言
+    // procedure 宣言をここに入れる
     while (tok.attr == RWORD && tok.value == PROCEDURE) {
         getsym(); /* procedure */
         if (tok.attr != IDENTIFIER) error("procedure宣言で識別子が必要です。");
@@ -376,7 +376,7 @@ void statement(void){
         fprintf(outfile, "writec r1\n");
 
     // 代入: ident := expression
-    // 手続き呼び出しを追加する
+    // ここに手続き呼び出しを追加する
     } else if (tok.attr == IDENTIFIER) {
         char name[MAXIDLEN+1];
         int idx, argc;
@@ -387,7 +387,7 @@ void statement(void){
 
         getsym(); /* 識別子を消費して次トークンを見る */
 
-        /* 呼び出し: ident(...) */
+        /* 呼び出し */
         if (tok.attr == SYMBOL && tok.value == LPAREN) {
             argc = paramlist(PARAM_CALL);  /* push を内部で実行 */
             int lbl = proc_label[idx];
