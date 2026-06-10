@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <getsym.h>
+
 
 #include "symtab.h"
 #include "label.h"
+#include "gen_emit.h"
+
+void inblock(SymEntry* proc_sym);
 
 #include <string.h>
 
@@ -17,7 +20,7 @@ void outblock(void);
 static void parse_expression_bottomup(void);
 // static void term(void);
 // static void factor(void);
-static int new_temp(void);
+static SymEntry* new_temp(void);
 
 static int fits_immed(int v);
 static void emit_load_const_to_reg(int reg, int val);
@@ -67,13 +70,11 @@ void error(char *s){
 //
 
 /* 簡易一時確保: __tmp0, __tmp1 ... を symtab に登録してインデックスを返す */
-static int new_temp(void){
+static SymEntry* new_temp(void){
     static int tmpcnt = 0;
     char tmpname[MAXIDLEN+1];
-    int idx;
     snprintf(tmpname, sizeof(tmpname), "__tmp%d", tmpcnt++);
-    idx = sym_install(tmpname);
-    return idx;
+    return sym_install_global_var(tmpname);
 }
 
 /* ラッパー*/
@@ -134,14 +135,14 @@ static void eval_to_r0(void){
 //                 getsym();
 //             } else {
 //                 /* 複雑な RHS: 左を一時保存して RHS を評価し結合する */
-//                 int tmp = new_temp();
-//                 fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+//                 SymEntry* tmp = new_temp();
+//                 emit_store("r0", tmp); /* left -> mem */
 //                 factor(); /* RHS -> r0 */
-//                 fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+//                 emit_load("r1", tmp); /* r1 = left */
 //                 if (opattr == SYMBOL && op == TIMES) fprintf(outfile, "mulr r1, r0\n");
 //                 else fprintf(outfile, "divr r1, r0\n");
-//                 fprintf(outfile, "store r1, %d\n", tmp);
-//                 fprintf(outfile, "load r0, %d\n", tmp); /* 結果 -> r0 */
+//                 emit_store("r1", tmp);
+//                 emit_load("r0", tmp); /* 結果 -> r0 */
 //             }
 //             continue;
 //         }
@@ -154,15 +155,15 @@ static void eval_to_r0(void){
 //     term(); /* left -> r0 */
 //     while (tok.attr == SYMBOL && (tok.value == PLUS || tok.value == MINUS)) {
 //         int op = tok.value;
-//         int tmp = new_temp();
-//         fprintf(outfile, "store r0, %d\n", tmp); /* save left */
+//         SymEntry* tmp = new_temp();
+//         emit_store("r0", tmp); /* save left */
 //         getsym(); /* consume + or - */
 //         term();  /* parse entire RHS into r0 */
-//         fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+//         emit_load("r1", tmp); /* r1 = left */
 //         if (op == PLUS) fprintf(outfile, "addr r1, r0\n");
 //         else fprintf(outfile, "subr r1, r0\n");
-//         fprintf(outfile, "store r1, %d\n", tmp);
-//         fprintf(outfile, "load r0, %d\n", tmp); /* result -> r0 */
+//         emit_store("r1", tmp);
+//         emit_load("r0", tmp); /* result -> r0 */
 //     }
 // }
 
@@ -173,15 +174,15 @@ static void eval_to_r0(void){
 //        まず最初の term を評価して r0 に置き、次のトークンが + または - ならループで処理する。 */
 //     while (tok.attr == SYMBOL && (tok.value == PLUS || tok.value == MINUS)) {
 //         int op = tok.value;
-//         int tmp = new_temp();
-//         fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+//         SymEntry* tmp = new_temp();
+//         emit_store("r0", tmp); /* left -> mem */
 //         getsym(); /* + または - を消費 */
 //         term(); /* 次の term -> r0 */
-//         fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+//         emit_load("r1", tmp); /* r1 = left */
 //         if (op == PLUS) fprintf(outfile, "addr r1, r0\n");
 //         else fprintf(outfile, "subr r1, r0\n");
-//         fprintf(outfile, "store r1, %d\n", tmp);
-//         fprintf(outfile, "load r0, %d\n", tmp); /* 結果 -> r0 */
+//         emit_store("r1", tmp);
+//         emit_load("r0", tmp); /* 結果 -> r0 */
 //     }
 // }
 
@@ -202,17 +203,17 @@ static int emit_compare_and_consume(void){
             getsym();
         }
     } else if (tok.attr == IDENTIFIER) {
-        int rhs = sym_lookup(tok.charvalue);
-        if (rhs == -1) error("右辺の変数が未定義です。");
-        fprintf(outfile, "load r1, %d\n", rhs);
+        SymEntry* rhs = sym_lookup(tok.charvalue);
+        if (!rhs) error("右辺の変数が未定義です。");
+        emit_load("r1", rhs);
         fprintf(outfile, "cmpr r0, r1\n");
         getsym();
     } else {
         /* 複雑な RHS：左を一時保存して expression() で評価 */
-        int tmp = new_temp();
-        fprintf(outfile, "store r0, %d\n", tmp); /* left -> mem */
+        SymEntry* tmp = new_temp();
+        emit_store("r0", tmp); /* left -> mem */
         parse_expression_bottomup(); /* RHS -> r0 */
-        fprintf(outfile, "load r1, %d\n", tmp); /* r1 = left */
+        emit_load("r1", tmp); /* r1 = left */
         fprintf(outfile, "cmpr r1, r0\n");      /* compare left,right */
     }
     return op;
@@ -226,7 +227,7 @@ void outblock(void){
         getsym(); /* VAR の次のトークンへ */
         if (tok.attr != IDENTIFIER) error("var宣言で識別子が必要です。");
         for (;;) {
-            sym_install(tok.charvalue); /* 登録（既存なら重複回避） */
+            sym_install_global_var(tok.charvalue); /* 登録（既存なら重複回避） */
             getsym();
             if (tok.attr == SYMBOL && tok.value == COMMA) {
                 getsym(); /* 次の識別子へ */
@@ -235,6 +236,9 @@ void outblock(void){
             } else if (tok.attr == SYMBOL && tok.value == SEMICOLON) {
                 getsym(); /* セミコロンの次へ（次の宣言または文頭） */
                 // statement(); /* VAR 宣言の後は文が続く */
+
+                // ここ？procedure
+
                 break;
             } else {
                 error("var宣言の文法エラー。',' または ';' が必要です。");
@@ -243,6 +247,24 @@ void outblock(void){
     }
     /* outblock 終了時点で tok は次の文（通常 BEGIN など）の先頭を指す */
 }
+
+// // procedure宣言の処理もここに追加する必要がある
+// void inblock(void){
+//     /* procedure 宣言を読み、識別子を登録し、セミコロンで終える。
+//        procedure が複数並ぶ場合は繰り返する。 */
+//     while (tok.attr == RWORD && tok.value == PROCEDURE) {
+//         getsym(); /* procedure の次のトークンへ */
+//         if (tok.attr != IDENTIFIER) error("procedure宣言で識別子が必要です。");
+//         sym_install(tok.charvalue); /* 登録（既存なら重複回避） */
+//         getsym();
+//         if (tok.attr == SYMBOL && tok.value == SEMICOLON) {
+//             getsym(); /* セミコロンの次へ（次の宣言または文頭） */
+//             statement(); /* procedure 宣言の後は文が続く */
+//             break;
+//         } else {
+//             error("procedure宣言の文法エラー。';' が必要です。");
+//         }
+//     }
 
 void statement(void){
     static int depth = 0;
@@ -270,9 +292,9 @@ void statement(void){
         for (;;) {
             /* 引数が識別子ならそのアドレスを load、数値なら loadi */
             if (tok.attr == IDENTIFIER) {
-                int idx = sym_lookup(tok.charvalue);
-                if (idx == -1) error("writeで未定義の変数です。");
-                fprintf(outfile, "load r0, %d\n", idx); /* 変数の値を r0 に */
+                SymEntry* e = sym_lookup(tok.charvalue);
+                if (!e) error("writeで未定義の変数です。");
+                emit_load("r0", e);
                 getsym();
             } else if (tok.attr == NUMBER) {
                 fprintf(outfile, "loadi r0, %d\n", tok.value); /* 即値を r0 に */
@@ -296,11 +318,14 @@ void statement(void){
         fprintf(outfile, "writec r1\n");
 
     /* 代入: ident := expression */
+
+    // ここを変更しないといけない
+    // 手続き処理のParamlistを追加する
     } else if (tok.attr == IDENTIFIER) {
         char name[MAXIDLEN+1];
         strcpy(name, tok.charvalue); /* トークンの識別子名をコピー */
-        int lhs = sym_lookup(name);
-        if (lhs == -1) error("未宣言の変数に代入しようとしています。");
+        SymEntry* lhs = sym_lookup(name);
+        if (!lhs) error("未宣言の変数に代入しようとしています。");
         getsym(); /* 識別子を消費 */
 
         if (!(tok.attr == SYMBOL && tok.value == BECOMES)) error("':=' が必要です。");
@@ -310,7 +335,7 @@ void statement(void){
         eval_to_r0();
 
         /* 計算結果を左辺のアドレスへ格納 */
-        fprintf(outfile, "store r0, %d\n", lhs);
+        emit_store("r0", lhs);
 
     /* if 文: if condition then statement [ else statement ] */
     } else if (tok.attr == RWORD && tok.value == IF) {
@@ -477,7 +502,7 @@ static const int rank_g[OP_NUMOPS] = {
 static int op_stack[OP_STACK_SIZE];
 static int op_top = -1;
 
-static int val_stack[VAL_STACK_SIZE]; /* 被演算子はsymtab のインデックスを積む */
+static SymEntry* val_stack[VAL_STACK_SIZE]; /* 被演算子はsymtab のインデックスを積む */
 static int val_top = -1;
 
 /* op_stack 操作 */
@@ -495,11 +520,11 @@ static int top_op(void){
 }
 
 /* val_stack 操作 */
-static void push_val(int v){
+static void push_val(SymEntry* v){
     if (val_top >= VAL_STACK_SIZE-1) error("被演算子スタックオーバーフロー");
     val_stack[++val_top] = v;
 }
-static int pop_val(void){
+static SymEntry* pop_val(void){
     if (val_top < 0) error("被演算子スタックアンダーフロー");
     return val_stack[val_top--];
 }
@@ -541,20 +566,20 @@ static void parse_expression_bottomup(void){
     for (;;) {
         /* 数値の処理：読んで一時的にスタックへ */
         if (tok.attr == IDENTIFIER) {
-            int v = sym_lookup(tok.charvalue);
-            if (v == -1) error("未定義の変数です。");
-            int tmp = new_temp();
-            fprintf(outfile, "load r0, %d\n", v);
-            fprintf(outfile, "store r0, %d\n", tmp);
+            SymEntry* v = sym_lookup(tok.charvalue);
+            if (!v) error("未定義の変数です。");
+            SymEntry* tmp = new_temp();
+            emit_load("r0", v);
+            emit_store("r0", tmp);
             push_val(tmp);
             getsym();
             expect_operand = 0;
             continue;
         }
         if (tok.attr == NUMBER) {
-            int tmp = new_temp();
+            SymEntry* tmp = new_temp();
             emit_load_const_to_reg(0, tok.value); /* r0 に値 */
-            fprintf(outfile, "store r0, %d\n", tmp);
+            emit_store("r0", tmp);
             push_val(tmp);
             getsym();
             expect_operand = 0;
@@ -584,21 +609,21 @@ static void parse_expression_bottomup(void){
             if (op == OP_UNARY) {
                 /* 単項マイナス: 1オペランド */
                 if (val_top < 0) error("単項演算子の被演算子が不足しています。");
-                int a = pop_val();
-                fprintf(outfile, "load r0, %d\n", a);
+                SymEntry* a = pop_val();
+                emit_load("r0", a);
                 /* r0 = -r0 を作る（安全のため r1 に -1 を作って乗算） */
                 emit_load_const_to_reg(1, -1);
                 fprintf(outfile, "mulr r0, r1\n");
-                int tmp = new_temp();
-                fprintf(outfile, "store r0, %d\n", tmp);
+                SymEntry* tmp = new_temp();
+                emit_store("r0", tmp);
                 push_val(tmp);
             } else {
                 /* 二項演算 */
                 if (val_top < 1) error("二項演算子の被演算子が不足しています。");
-                int right = pop_val();
-                int left  = pop_val();
-                fprintf(outfile, "load r0, %d\n", left);
-                fprintf(outfile, "load r1, %d\n", right);
+                SymEntry* right = pop_val();
+                SymEntry* left  = pop_val();
+                emit_load("r0", left);
+                emit_load("r1", right);
                 switch(op){
                     case OP_PLUS:  fprintf(outfile, "addr r0, r1\n"); break;
                     case OP_MINUS: fprintf(outfile, "subr r0, r1\n"); break;
@@ -610,8 +635,8 @@ static void parse_expression_bottomup(void){
                         fprintf(stderr, "reduce: unexpected op=%s (%d)\n", op_name(op), op);
                         error("不明な演算子で還元しました。");
                 }
-                int tmp = new_temp();
-                fprintf(outfile, "store r0, %d\n", tmp);
+                SymEntry* tmp = new_temp();
+                emit_store("r0", tmp);
                 push_val(tmp);
             }
             /* 還元時はトークンを進めず、同じ入力トークンで再比較する */
@@ -636,6 +661,6 @@ static void parse_expression_bottomup(void){
 
     /* 終了時：val_stack のトップを r0 に */
     if (val_top < 0) error("空の式です。");
-    int final_addr = pop_val();
-    fprintf(outfile, "load r0, %d\n", final_addr);
+    SymEntry* final_addr = pop_val();
+    emit_load("r0", final_addr);
 }
