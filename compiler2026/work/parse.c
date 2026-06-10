@@ -14,6 +14,8 @@ extern FILE *outfile;
 void error(char *s);
 void statement(void);
 void outblock(void);
+void inblock(void);
+static int paramlist(int mode);
 static void expression(void);
 static void term(void);
 static void factor(void);
@@ -22,9 +24,19 @@ static int new_temp(void);
 static int fits_immed(int v);
 static void emit_load_const_to_reg(int reg, int val);
 
+#define PARAM_DECL 0
+#define PARAM_CALL 1
+
+#define MAXSYMS 32
+static int proc_label[MAXSYMS];
+static int current_proc = -1;
+static int main_label = -1;
+
 void compiler(void){
 	init_getsym();
-
+	/* proc_label を初期化 */
+	for (int i = 0; i < MAXSYMS; ++i) proc_label[i] = -1;
+	main_label = -1; 
 	getsym();
 
 	if (tok.attr == RWORD && tok.value == PROGRAM){
@@ -43,6 +55,8 @@ void compiler(void){
 
                 /* 変数登録の直後にシンボルテーブルをダンプ*/
                 sym_dump();
+
+                if (main_label != -1) emit_label(main_label);
 
 				// // チェックよう
 				// printf("Current token: attr=%d, value=%d\n", tok.attr, tok.value);
@@ -164,6 +178,26 @@ static void expression(void){
     }
 }
 
+// // paramlistを作成
+// void paramlist(void){
+//     /* ( id {, id} ) の形で引数リストを処理する。呼び出し側も同様の処理が必要。 */
+//     if (tok.attr == SYMBOL && tok.value == LPAREN) {
+//         getsym(); /* '(' を消費 */
+//         if (tok.attr != IDENTIFIER) error("引数名が必要です。");
+//         for (;;) {
+//             sym_install(tok.charvalue); /* 最小実装: 引数名を登録（将来は arg に扱い分け） */
+//             getsym();
+//             if (tok.attr == SYMBOL && tok.value == COMMA) {
+//                 getsym(); /* ',' を消費して次へ */
+//                 if (tok.attr != IDENTIFIER) error("引数名が必要です。");
+//                 continue;
+//             } else break;
+//         }
+//         if (!(tok.attr == SYMBOL && tok.value == RPAREN)) error("')' が必要です。");
+//         getsym(); /* ')' を消費 */
+//     }
+// }
+
 /* 右辺を r0/r1 に評価して比較命令を出力する。比較演算子を返す。 */
 static int emit_compare_and_consume(void){
     int op = tok.value; /* 比較演算子を保持 */
@@ -196,6 +230,9 @@ static int emit_compare_and_consume(void){
 }
 
 // 変数宣言
+
+// ここを編集する
+// procedureを入れる
 void outblock(void){
     /* VAR 宣言を読み、識別子をカンマ区切りで登録し、セミコロンで終える。
        VAR が複数並ぶ場合は繰り返す。 */
@@ -219,8 +256,74 @@ void outblock(void){
         }
     }
     /* outblock 終了時点で tok は次の文（通常 BEGIN など）の先頭を指す */
+
+    // procedure 宣言
+    while (tok.attr == RWORD && tok.value == PROCEDURE) {
+        getsym(); /* procedure */
+        if (tok.attr != IDENTIFIER) error("procedure宣言で識別子が必要です。");
+        int proc_idx = sym_install(tok.charvalue); /* 手続き名登録 */
+        int lbl = new_label();                      /* 手続き用ラベルを作成 */
+        proc_label[proc_idx] = lbl;                 /* マップに保存 */
+        current_proc = proc_idx;                    /* inblock で使うため保持 */
+
+        /* 最初の procedure を出力する前に main に飛ぶジャンプを出す */
+        if (main_label == -1) {
+            main_label = new_label();
+            fprintf(outfile, "jmp L%d\n", main_label);
+        }
+
+        getsym(); /* 手続き名を読む */
+
+        /* 仮引数リスト */
+        paramlist(PARAM_DECL);
+
+        if (!(tok.attr == SYMBOL && tok.value == SEMICOLON))
+            error("procedure宣言の文法エラー。';' が必要です。");
+        getsym(); /* ヘッダ末尾 ';' */
+
+        inblock(); /* 本体を処理 */
+
+        if (!(tok.attr == SYMBOL && tok.value == SEMICOLON))
+            error("procedure本体の終端に ';' が必要です。");
+        getsym(); /* 本体末尾 ';' */
+    }
 }
 
+// inblock
+void inblock (void){
+    /* 手続き本体開始時にラベルを出力 */
+    if (current_proc != -1) {
+        emit_label(proc_label[current_proc]);
+    }
+
+    current_proc = -1;
+
+    /* 局所 変数 宣言 */
+    while (tok.attr == RWORD && tok.value == VAR) {
+        getsym();
+        if (tok.attr != IDENTIFIER) error("var宣言で識別子が必要です。");
+        for (;;) {
+            sym_install(tok.charvalue); /* 局所も同一表に登録 */
+            getsym();
+            if (tok.attr == SYMBOL && tok.value == COMMA) {
+                getsym();
+                if (tok.attr != IDENTIFIER) error("var宣言で識別子が必要です。");
+                continue;
+            } else if (tok.attr == SYMBOL && tok.value == SEMICOLON) {
+                getsym();
+                break;
+            } else {
+                error("var宣言の文法エラー。',' または ';' が必要です。");
+            }
+        }
+    }
+
+    /* 手続き本体 */
+    statement();
+}
+
+// statement
+// この中にParamlistを追加する
 void statement(void){
     static int depth = 0;
     int is_outer = (depth == 0); /* 外側からの呼び出しかどうか */
@@ -272,22 +375,35 @@ void statement(void){
         fprintf(outfile, "loadi r1, 10\n");
         fprintf(outfile, "writec r1\n");
 
-    /* 代入: ident := expression */
+    // 代入: ident := expression
+    // 手続き呼び出しを追加する
     } else if (tok.attr == IDENTIFIER) {
         char name[MAXIDLEN+1];
-        strcpy(name, tok.charvalue); /* トークンの識別子名をコピー */
-        int lhs = sym_lookup(name);
-        if (lhs == -1) error("未宣言の変数に代入しようとしています。");
-        getsym(); /* 識別子を消費 */
+        int idx, argc;
 
-        if (!(tok.attr == SYMBOL && tok.value == BECOMES)) error("':=' が必要です。");
-        getsym(); /* ':=' を消費 */
+        strcpy(name, tok.charvalue);
+        idx = sym_lookup(name);
+        if (idx == -1) error("未宣言の識別子です。");
 
-        /* 右辺を r0 に評価　*/
-        eval_to_r0();
+        getsym(); /* 識別子を消費して次トークンを見る */
 
-        /* 計算結果を左辺のアドレスへ格納 */
-        fprintf(outfile, "store r0, %d\n", lhs);
+        /* 呼び出し: ident(...) */
+        if (tok.attr == SYMBOL && tok.value == LPAREN) {
+            argc = paramlist(PARAM_CALL);  /* push を内部で実行 */
+            int lbl = proc_label[idx];
+            if (lbl == -1) error("未定義の手続きラベルです。");
+            fprintf(outfile, "call L%d\n", lbl);
+            if (argc > 0) fprintf(outfile, "addi sp, %d\n", argc); /* 実引数破棄（簡易） */
+
+        /* 代入: ident := expression */
+        } else if (tok.attr == SYMBOL && tok.value == BECOMES) {
+            getsym(); /* ':=' */
+            eval_to_r0();
+            fprintf(outfile, "store r0, %d\n", idx);
+
+        } else {
+            error("識別子の後に ':=' または '(' が必要です。");
+        }
 
     /* if 文: if condition then statement [ else statement ] */
     } else if (tok.attr == RWORD && tok.value == IF) {
@@ -406,4 +522,40 @@ static void emit_load_const_to_reg(int reg, int val){
         return;
     }
     error("定数が大きすぎて処理できません。");
+}
+
+static int paramlist(int mode){
+    int cnt = 0;
+
+    /* '(' がなければ引数なし */
+    if (!(tok.attr == SYMBOL && tok.value == LPAREN)) return 0;
+    getsym(); /* '(' を消費 */
+
+    /* 空引数 () */
+    if (tok.attr == SYMBOL && tok.value == RPAREN) {
+        getsym(); /* ')' を消費 */
+        return 0;
+    }
+
+    for (;;) {
+        if (mode == PARAM_DECL) {
+            if (tok.attr != IDENTIFIER) error("引数名が必要です。");
+            sym_install(tok.charvalue); /* 最小実装: 宣言引数を登録 */
+            getsym();
+        } else { /* PARAM_CALL */
+            expression();               /* 実引数を評価して r0 へ */
+            fprintf(outfile, "push r0\n");
+            cnt++;
+        }
+
+        if (tok.attr == SYMBOL && tok.value == COMMA) {
+            getsym(); /* ',' を消費 */
+            continue;
+        }
+        break;
+    }
+
+    if (!(tok.attr == SYMBOL && tok.value == RPAREN)) error("')' が必要です。");
+    getsym(); /* ')' を消費 */
+    return cnt;
 }
