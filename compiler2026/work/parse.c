@@ -1,3 +1,5 @@
+// トップダウンの再帰下降構文解析器バックアップ
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <getsym.h>
