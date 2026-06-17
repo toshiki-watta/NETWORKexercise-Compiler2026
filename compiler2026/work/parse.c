@@ -14,6 +14,8 @@ extern FILE *outfile;
 void error(char *s);
 void statement(void);
 void outblock(void);
+void inblock(void);
+int paramlist(int mode);
 
 static void parse_expression_bottomup(void);
 // static void term(void);
@@ -220,6 +222,41 @@ static void eval_to_r0(void){
 //         getsym(); /* ')' を消費 */
 //     }
 // }
+
+int paramlist(int mode){
+    int argc = 0;
+    /* expecting '(' */
+    if (!(tok.attr == SYMBOL && tok.value == LPAREN)) return 0;
+    getsym(); /* consume '(' */
+
+    /* empty arg list */
+    if (tok.attr == SYMBOL && tok.value == RPAREN){
+        getsym(); /* consume ')' */
+        return 0;
+    }
+
+    for (;;){
+        if (mode == PARAM_DECL){
+            if (tok.attr != IDENTIFIER) error("引数名が必要です。");
+            sym_install(tok.charvalue); /* formal: register name */
+            getsym(); /* consume identifier */
+        } else { /* PARAM_CALL */
+            eval_to_r0();                /* evaluate expression -> r0 */
+            fprintf(outfile, "push r0\n"); /* push argument value */
+            argc++;
+        }
+
+        if (tok.attr == SYMBOL && tok.value == COMMA){
+            getsym(); /* consume ',' and continue */
+            continue;
+        }
+        break;
+    }
+
+    if (!(tok.attr == SYMBOL && tok.value == RPAREN)) error("')' が必要です。");
+    getsym(); /* consume ')' */
+    return argc;
+}
 
 /* 右辺を r0/r1 に評価して比較命令を出力する。比較演算子を返す。 */
 static int emit_compare_and_consume(void){

@@ -1,5 +1,4 @@
 loadi r0, 0
-
 store r0, 8
 load r0, 8
 store r0, 0
@@ -182,13 +181,11 @@ load r1, 61
 addr r0, r1
 store r0, 62
 load r0, 62
-
 loadi r1, 32
 muli r1, 31250
 cmpr r0, r1
 jge L2
 load r0, 5
-
 store r0, 63
 loadi r0, 1
 store r0, 64
@@ -208,7 +205,6 @@ load r1, 67
 addr r0, r1
 store r0, 68
 load r0, 68
-
 store r0, 0
 jmp L0
 L1:
@@ -221,7 +217,6 @@ load r1, 70
 mulr r0, r1
 store r0, 71
 load r0, 71
-
 store r0, 4
 load r0, 4
 writed r0
