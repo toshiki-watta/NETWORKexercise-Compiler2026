@@ -1,4 +1,4 @@
-# 编译產物 / オブジェクトファイル
+# オブジェクトファイル
 *.o
 *.cmx
 *.cmi
@@ -11,3 +11,15 @@ compiler
 
 # OSが自動生成する非表示ファイル（Mac用）
 .DS_Store
+
+# TEX関連の一時ファイル
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+.gz
+.synctex.gz
