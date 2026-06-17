@@ -200,6 +200,7 @@
 具体的には、エラー内容を示す具体的なメッセージを \texttt{fprintf(stderr, ...)} で標準エラー出力に明示させた後、
 \texttt{exit(1)} を呼び出して直ちにコンパイル処理を異常終了（パニックアウト）させる仕様としている。
 
+
 \subsection*{【主なエラー検知ケースの例】}
 \begin{enumerate}
     \item \textbf{構文記号の欠落：} \texttt{program} 宣言直後のセミコロン（\texttt{;}）の欠落、\texttt{if} 文における \texttt{then} キーワードの欠落、数式における閉じカッコ（\texttt{)}）の欠落など。
