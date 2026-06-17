@@ -271,6 +271,7 @@
 合格要件である正しい計算結果が得られている。
 
 \subsection*{ターミナル上でのコンパイル・実行ログ}
+トップダウンの時
 \begin{verbatim}
 watanabetoshiki@toshiki-MacBook-Air work % make                      
 gcc parse.c -c -O2 -Wall -I. -I/Users/watanabetoshiki/p1/include -L/Users/watanabetoshiki/p1/lib -lics
@@ -304,6 +305,42 @@ loading 'a.out'
 HALT at 221.
 ;;; exec time = 922323 micro sec.
 \end{verbatim}
+
+ボトムアップの時
+\begin{verbatim}
+    watanabetoshiki@toshiki-MacBook-Air work % make
+gcc parse.c -c -O2 -Wall -I. -I/Users/watanabetoshiki/p1/include -L/Users/watanabetoshiki/p1/lib -lics
+clang: warning: -lics: 'linker' input unused [-Wunused-command-line-argument]
+clang: warning: argument unused during compilation: '-L/Users/watanabetoshiki/p1/lib' [-Wunused-command-line-argument]
+gcc symtab.c -c -O2 -Wall -I. -I/Users/watanabetoshiki/p1/include -L/Users/watanabetoshiki/p1/lib -lics
+clang: warning: -lics: 'linker' input unused [-Wunused-command-line-argument]
+clang: warning: argument unused during compilation: '-L/Users/watanabetoshiki/p1/lib' [-Wunused-command-line-argument]
+gcc main.o parse.o symtab.o label.o -o compiler -O2 -Wall -I. -I/Users/watanabetoshiki/p1/include -L/Users/watanabetoshiki/p1/lib -lics
+watanabetoshiki@toshiki-MacBook-Air work % ./compiler ../samples/pi.p
+Simple compiler: compiler start.
+=== sym_dump (count=8) ===
+  [ 0] name="i" addr=0
+  [ 1] name="rand" addr=1
+  [ 2] name="ca" addr=2
+  [ 3] name="cm" addr=3
+  [ 4] name="pi" addr=4
+  [ 5] name="qpi" addr=5
+  [ 6] name="x" addr=6
+  [ 7] name="y" addr=7
+===========================
+3
+268
+watanabetoshiki@toshiki-MacBook-Air work % make asm
+/Users/watanabetoshiki/p1/bin/asm a.asm > a.out
+watanabetoshiki@toshiki-MacBook-Air work % make sr
+/Users/watanabetoshiki/p1/bin/sr a.out
+loading 'a.out'
+3124
+
+HALT at 221.
+;;; exec time = 922323 micro sec.
+\end{verbatim}
+
 実行結果として、指導書および口頭指示で指定された合格要件値である \textbf{ 「3124」 } が正常に出力されていることを確認した。
 
 \section*{(10) こちらから指定したプログラムの実行時間}
