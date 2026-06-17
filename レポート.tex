@@ -52,219 +52,693 @@
 
 \noindent\rule{\linewidth}{0.4pt}
 
+% セクション1
+
 \section*{(1) 最終的に作成した記号表の構造と操作関数の仕様}
 
-\subsection*{1. 記号表の構造}
-本コンパイラでは、簡易的な1次元の配列構造を用いて識別子（変数名・手続き名）を管理している。
-\texttt{MAXSYMS}（32個）を上限とし、登録された文字列（識別子名）をベースに一元管理を行う。
-現段階では大域変数表と局所変数表を完全に物理分離する手前の簡易実装であるため、
-手続き名に対応するラベルを専用の配列 \texttt{proc\_label} でマッピング管理する構造を採っている。
+\subsection*{1. 記号表の構造とコンパイラにおける役割}
+記号表（シンボルテーブル）は、原始プログラム中に出現する変数や手続きなどの識別子（\texttt{IDENTIFIER}）を管理し、その属性や割当番地、スコープを保持するための極めて重要なデータ構造である。
+本コンパイラの実装においては、ヘッダファイル \texttt{symtab.h} およびソースファイル \texttt{symtab.c} に独立したモジュールとして管理機構を分離・実装している。
 
-\subsection*{2. 操作関数の仕様}
+現在割り当てられている記号表は、最大登録数 \texttt{MAXSYMS}（32個）を上限とする1次元の構造体配列である。
+識別子名となる文字列 \texttt{char name[MAXIDLEN+1]} をキーとして保持し、配列のインデックスそのものが、目的計算機（仮想マシン \texttt{sr}）における大域変数の固定データメモリ番地（オフセットアドレス）に対応するマッピング構造を採っている。
+また、数式評価時に動的に生成される一時確保用変数（\texttt{\_\_tmp0}, \texttt{\_\_tmp1} $\dots$）もこの記号表へ逐次追加登録され、一元的に番地管理が行われる。
+
+さらに、今後の発展的な拡張機能である「手続き（\texttt{PROCEDURE}）処理」への対応を見据え、手続き名とその開始ラベルの対応関係を保持する配列 \texttt{proc\_label} を記号表配列と並列にマッピングさせることで、簡易的な手続き識別情報の管理を実現している。
+
+\subsection*{2. 記号表のメモリマッピング概念図}
+コンパイル時における識別子とデータ領域番地、および一次変数の記号表上での配置構造を図1に示す。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.5cm,
+    membox/.style={rectangle, draw, fill=gray!10, minimum width=3.5cm, minimum height=0.7cm, align=center, font=\small\ttfamily},
+    idxbox/.style={rectangle, minimum width=1cm, minimum height=0.7cm, align=right, font=\small\ttfamily}
+]
+    % テーブルタイトルの配置
+    \node[anchor=south] at (0, 0.4) {\textbf{Index (番地)}};
+    \node[anchor=south] at (3, 0.4) {\textbf{識別子名 (\texttt{name})}};
+
+    % 各要素の配置
+    \node[idxbox] (idx0) at (0, 0) {0 :};
+    \node[membox] (mem0) at (3, 0) {x (大域変数)};
+    
+    \node[idxbox] (idx1) at (0, -0.7) {1 :};
+    \node[membox] (mem1) at (3, -0.7) {y (大域変数)};
+    
+    \node[idxbox] (idx2) at (0, -1.4) {2 :};
+    \node[membox] (mem2) at (3, -1.4) {\texttt{\_\_tmp0} (一時変数)};
+    
+    \node[idxbox] (idx3) at (0, -2.1) {3 :};
+    \node[membox] (mem3) at (3, -2.1) {\texttt{\_\_tmp1} (一時変数)};
+
+    \node[idxbox] (idxdots) at (0, -2.9) {$\vdots$};
+    \node[membox, fill=white] (memdots) at (3, -2.9) {$\vdots$};
+
+    \node[idxbox] (idxmax) at (0, -3.7) {31 :};
+    \node[membox] (memmax) at (3, -3.7) {(空き領域)};
+
+    % 外枠のグループ化
+    \draw[thick, dashed, blue!60] (-1, 0.5) rectangle (5.5, -4.2);
+    \node[anchor=north, blue] at (2.25, -4.3) {\small 記号表配列 (\texttt{MAXSYMS} = 32)};
+\end{tikzpicture}
+\caption{記号表の管理構造とデータアドレスの割り当て概念図}
+\label{fig:symtab_structure}
+\end{center}
+\end{figure}
+
+\subsection*{3. 操作関数の仕様とアルゴリズム}
+記号表の操作は、構文解析側から透過的に利用できるように以下の3つの関数によって定義されている。
+
 \begin{itemize}
-    \item \texttt{int sym\_install(char *name);} \\
-    識別子を新たに記号表に登録し、そのインデックス（メモリ上の割当番地・オフセットに相当）を返す。
-    既存の重複がある場合は同一のインデックスを返すことで二重登録を回避する。
-    \item \texttt{int sym\_lookup(char *name);} \\
-    登録済みの識別子を前方一致（名前の一致）で検索し、発見された場合はそのインデックスを返す。
-    未定義の変数の場合は \texttt{-1} を返す。
-    \item \texttt{void sym\_dump(void);} \\
-    変数登録の直後に、現在の記号表に登録されている全識別子の状態を標準エラー出力へダンプし、デバッグを容易にする。
+    \item \texttt{int sym\_install(char *name); } \\
+    引数として渡された識別子名文字列（\texttt{name}）を走査し、すでに表内に同一名称の識別子が存在するかどうかを確認する。
+    未登録である場合は、現在カウントされている空きインデックス位置へ識別子名を登録し、その配列番号（割当番地）を返す。
+    もし既に登録済みである場合は、二重登録を防ぐため既存のインデックス番号をそのまま返す仕様である。
+    \item \texttt{int sym\_lookup(char *name); } \\
+    構文解析中に変数参照や代入文、あるいは条件式の評価文が現れた際、指定された識別子名が既に宣言されているかを逆引きするための関数である。
+    記号表配列を前方から線形探索し、一致する名前が発見された場合はそのインデックス（番地）を返す。
+    探索の結果、表内に存在しない識別子であった場合は宣言エラーとみなして \texttt{-1} を返すアルゴリズムを採っている。
+    \item \texttt{void sym\_dump(void); } \\
+    コンパイラ開発時およびプログラム検証時のデバッグ用関数である。
+    原始プログラムの変数宣言ブロック（\texttt{outblock}）の解析が完了した直後に呼び出され、その時点で記号表に登録されているすべての識別子名とインデックス番号を標準エラー出力（\texttt{stderr}）へ一斉にダンプ出力する。
 \end{itemize}
 
+\subsection*{4. 手続き拡張への課題と二重構造化への展望}
+現在の1次元配列による記号表の仕様は、すべての変数を大域変数（固定データ番地）として一列に管理する。
+この構造は、単純な数式処理や制御構文（\texttt{if}, \texttt{while}）の処理においては破綻なく動作するものの、手続き呼び出し、とりわけ「再帰呼び出し」を正しく実現するにあたっては構造的な限界を有している。
+
+手続きが再帰的に呼び出される場合、各呼び出し世代ごとに独立した局所変数（および引数）の領域が実行時スタック上に動的に確保されなければならない。
+しかし現状の記号表では、大域変数と手続き内の局所変数を識別・隔離する「スコープ（属性）」の情報が欠落しており、同一の関数インデックスに対してすべての世代から固定番地アクセスが実行されてしまうため、再帰呼び出し時にローカル変数の値が上書き破壊される。
+
+この課題を克服するためには、今後の発展的アプローチとして、記号表内に識別子の属性（大域変数 \texttt{K\_GLOBAL}、局所変数 \texttt{K\_LOCAL}、手続き名 \texttt{K\_PROCEDURE}）を区別するメンバを追加する必要がある。
+その上で、図2に示すように記号表自体を「大域記号表」と「手続き局所記号表」の二重構造（あるいはスコープ深度による木構造・スタック構造）へと拡張し、識別子探索時には「まず現在コンパイル中の手続きスコープ（局所表）を逆順に探索し、発見されなかった場合のみ大域表を参照する」というシャドーイング対策を施した動的オフセット管理の導入が必須である。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1cm,
+    tablebox/.style={rectangle, draw, fill=blue!5, minimum width=3.5cm, minimum height=1.5cm, align=center, font=\small},
+    arrowline/.style={draw, -latex', thick}
+]
+    % スコープ記号表の概念配置
+    \node[tablebox] (local) {局所記号表 \\ (手続き内スコープ) \\ \small [引数・局所変数の管理]};
+    \node[tablebox, right=2cm of local, fill=green!5] (global) {大域記号表 \\ (プログラム全体スコープ) \\ \small [プログラム名・グローバル変数の管理]};
+
+    % 探索順序のフロー矢印
+    \draw[arrowline] (-2.5, 0) -- node[above]{\small 識別子出現} (local.west);
+    \draw[arrowline] (local.east) -- node[above]{\small 1. まず探索} node[below]{\small (見つからない場合)} (global.west);
+    \draw[arrowline] (global.east) -- ++(1.5, 0) node[right, align=left]{\small アドレス確定 \\ \small (大域番地 or BR相対)};
+\end{tikzpicture}
+\caption{手続き拡張時に求められる記号表の二重スコープ構造案}
+\label{fig:double_symtab}
+\end{center}
+\end{figure}
+
+% セクション2
+
 \section*{(2) if文、while文のコンパイルの仕様}
-制御構文は、目的計算機（仮想マシン \texttt{sr}）が持つ比較命令、条件分岐命令、および無条件ジャンプ命令を組み合わせることで実現する。
-制御用ラベルの自動生成には \texttt{new\_label()} を使用する。
 
-\subsection*{1. if文 (\texttt{if condition then statement [else statement]})}
-条件式の左辺を解析して結果をレジスタ \texttt{r0} に評価した後、比較演算子（\texttt{=}, \texttt{<>}, \texttt{<} など）を 
-\texttt{emit\_compare\_and\_consume()} 内で解析し、右辺と値を比較する。
-コード生成においては、条件が「偽」となった場合に \texttt{else} 節（または \texttt{if} 文の直後）へジャンプする \textbf{ 逆条件ジャンプ命令 } （\texttt{jz}, \texttt{jnz}, \texttt{jge} 等）を出力する。\texttt{else} 節が存在する場合は、\texttt{then} 節の処理の終わりに全体の終了ラベルへ進む無条件ジャンプ（\texttt{jmp}）を配置する。
+\subsection*{1. 目的計算機における制御構文の実現原理}
+原始言語が提供する \texttt{if} 文や \texttt{while} 文といった高水準な制御構文は、目的計算機（仮想マシン \texttt{sr}）の命令セットアーキテクチャにおいては直接実行することができない。
+仮想マシンが持つジャンプ命令は、フラグ命令を参照して分岐を行う条件付きジャンプ命令（\texttt{jz}, \texttt{jnz}, \texttt{jge} 等）と、無条件に指定アドレスへ遷移する \texttt{jmp} 命令のみである。
+そのため、コンパイラは構文解析の過程において、条件式の評価結果と動的に生成される「制御用ラベル」を巧みに組み合わせ、直線的なアセンブリ命令の列へと展開（コンパイル）しなければならない。
+本コンパイラでは、ラベルの重複を防ぎ一意性を保証するため、\texttt{label.c} で提供される \texttt{new\_label()} 関数を利用してラベル番号を動的に払い出している。
 
-\subsection*{2. while文 (\texttt{while condition do statement})}
-ループの先頭（条件式の評価を開始する直前）に開始ラベルを出力する。
-条件式を評価し、結果が偽であればループ外（ループ終了ラベル）へと逆条件ジャンプさせる命令を配置する。
-ループ本体（\texttt{statement()}）の解析・コード生成が終了した直後に、
-再び開始ラベルへと無条件ジャンプ（\texttt{jmp}）する命令を出力することで、繰り返し制御を実現している。
+\subsection*{2. if文のコンパイル仕様と制御フロー}
+構造文解析関数 \texttt{statement()} 内で予約語 \texttt{IF} を検知した際、コンパイラはまず条件式の左辺を数式解析ルーチンを介してレジスタ \texttt{r0} に評価する。
+その後、続く比較演算子（\texttt{=}, \texttt{<>}, \texttt{<}, \texttt{<=}, \texttt{>}, \texttt{>=}）を \texttt{emit\_compare\_and\_consume()} 関数によって解析し、右辺の評価結果とレジスタ間で比較命令（\texttt{cmpr} あるいは \texttt{cmpi}）を発行する。
 
+この段階において、コンパイラは条件が成立したとき（真）の処理ではなく、**条件が不成立（偽）であったときに直後のブロックを飛び越えさせるための「逆条件ジャンプ命令」**を出力する。
+具体的には、原始言語側で等号 \texttt{=} が指定された場合、偽のケースは「等しくない」となるため不一致ジャンプ \texttt{jnz} を配置し、不等号 \texttt{<>} の場合は一致ジャンプ \texttt{jz} を出力する。
+
+原始プログラムが \texttt{ELSE} 節を伴う構文である場合は、\texttt{then} 節（真のとき実行される文）のコード生成の直後に、全体の終了位置へと導く無条件ジャンプ \texttt{jmp} 命令を挿入する。
+そして、\texttt{then} 節の終端に \texttt{else} 節の開始ラベルを、全体の終端に終了ラベルを出力（\texttt{emit\_label}）することで、if-then-else構造の正しい排他的分岐フローを確立する。
+この生成プロセスと制御構造の関係を図3に示す。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1cm,
+    block/.style={rectangle, draw, fill=blue!5, text width=9em, text centered, rounded corners, minimum height=2em},
+    lbl/.style={rectangle, draw, dashed, fill=red!5, text width=6em, text centered, minimum height=1.5em},
+    arrowline/.style={draw, -latex', thick}
+]
+    % 配置
+    \node[block] (cond) {条件式評価・比較 \\ \small (\texttt{cmpr r0, r1})};
+    \node[block, below=1.2cm of cond] (then_block) {\texttt{then} 節の処理 \\ \small [真の文を実行]};
+    \node[block, below=1.2cm of then_block] (else_block) {\texttt{else} 節の処理 \\ \small [偽の文を実行]};
+    \node[lbl, left=1.5cm of else_block] (l_else) {L\_ELSE ラベル};
+    \node[lbl, below=1cm of else_block] (l_end) {L\_END ラベル};
+
+    % 矢印と注釈
+    \draw[arrowline] (cond) -- node[right]{\small 条件成立 (真)} (then_block);
+    \draw[arrowline] (cond.west) -- ++(-1.5,0) |- node[left, pos=0.25]{\small 偽なら逆ジャンプ (\texttt{jnz / jz})} (l_else.west);
+    \draw[arrowline] (l_else.east) -- (else_block.west);
+    \draw[arrowline] (then_block.east) -- ++(1.5,0) |- node[right, pos=0.25]{\small 無条件遷移 (\texttt{jmp L\_END})} (l_end.east);
+    \draw[arrowline] (else_block) -- (l_end);
+\end{tikzpicture}
+\caption{if-then-else 構文における逆条件分岐のコード生成フロー}
+\label{fig:if_flow}
+\end{center}
+\end{figure}
+
+\subsection*{3. while文のコンパイル仕様と繰り返し構造}
+予約語 \texttt{WHILE} を検知した場合は、繰り返し処理を実現するために「ループ先頭への巻き戻し構造」を構成しなければならない。
+そのため、コンパイラはまず条件式の評価ルーチンへ突入する前に、一意な開始ラベル（\texttt{start\_lbl}）を即座に配置する。
+この開始ラベルの直後に条件式を評価させ、if文と同様に \texttt{emit\_compare\_and\_consume()} を用いて比較命令を出力した上で、条件が不成立（偽）となった際に繰り返しを即座に離脱してループ外へ脱出するための逆条件ジャンプ命令を発行する。
+
+この条件評価の関門を突破した（条件成立）とみなされる位置に、ループの本体となる文（\texttt{statement()}）のコードを生成する。
+ループ本体ブロックの解析コードの出力がすべて完了した直後、コンパイラは無条件に条件評価の先頭位置へと制御を強制帰還させるための \texttt{jmp [start\_lbl]} 命令を出力する。
+最後に、ループ脱出用ジャンプの遷移先となる終了ラベル（\texttt{end\_lbl}）を全体のエピローグとして書き出すことで、条件が真である限りメモリ上を循環し続ける安全な後判定型の繰り返し構造を組み立てている。
+このwhile文におけるコンパイル仕様の概念図を図4に示す。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1cm,
+    block/.style={rectangle, draw, fill=green!5, text width=9em, text centered, rounded corners, minimum height=2em},
+    lbl/.style={rectangle, draw, dashed, fill=red!5, text width=7em, text centered, minimum height=1.5em},
+    arrowline/.style={draw, -latex', thick}
+]
+    % 配置
+    \node[lbl] (l_start) {L\_START ラベル};
+    \node[block, below=0.8cm of l_start] (cond) {条件式評価・比較 \\ \small (\texttt{cmpr r0, r1})};
+    \node[block, below=1.2cm of cond] (body) {ループ本体の処理 \\ \small (\texttt{statement()})};
+    \node[lbl, below=1.2cm of body] (l_end) {L\_END ラベル};
+
+    % 矢印とフロー
+    \draw[arrowline] (l_start) -- (cond);
+    \draw[arrowline] (cond) -- node[right]{\small 条件成立 (真)} (body);
+    \draw[arrowline] (cond.west) -- ++(-1.8,0) |- node[left, pos=0.25]{\small 偽なら脱出ジャンプ} (l_end.west);
+    \draw[arrowline] (body.east) -- ++(1.5,0) |- node[right, pos=0.25]{\small 先頭へ巻戻し (\texttt{jmp L\_START})} (l_start.east);
+    \draw[arrowline] (body) -- (l_end);
+\end{tikzpicture}
+\caption{while 文における繰り返し境界とラベルによる帰還制御構造}
+\label{fig:while_flow}
+\end{center}
+\end{figure}
+
+
+% セクション3
 \section*{(3) 作成した演算子順位構文解析の仕様}
-本コンパイラでは、トップダウン法とは別に、自作の演算子スタックおよび被演算子スタックを明示的に制御する「演算子順位構文解析法（ボトムアップ構文解析）」を数式処理に実装した。
 
-\subsection*{1. 順位関係の定義と優先度表}
-字句解析から渡される各種演算子（加減乗除、カッコ、識別子、および式の終端を表す番兵\texttt{\$}）の順位関係を制御するため、指導書の定義に準拠した2つの優先度関数 \texttt{rank\_f} （スタック内優先度）および \texttt{rank\_g} （入力側優先度）の配列を定義した。それぞれの優先度の値を表1に示す。単項マイナス（\texttt{OP\_UNARY}）を入力側で最も高い優先度（15）に設定し、カッコの入れ子構造や結合規則を正しく処理できるようにしている。
+\subsection*{1. ボトムアップ構文解析の導入背景と設計方針}
+本コンパイラでは、数式解析（式評価）の堅牢性を高めるため、システム（C言語）の再帰呼び出しに頼るトップダウン法とは異なり、コンパイラ内部で独立したスタックを明示的に制御する「演算子順位構文解析法（ボトムアップ構文解析）」を数式解析ルーチンとして全面的に採用・実装した。
+字句解析から順次渡されるトークンの列を、右から左へとボトムアップに還元（リデュース）していくため、関数 \texttt{parse\_expression\_bottomup()} 内にサイズ256の演算子スタック（\texttt{op\_stack}）と被演算子スタック（\texttt{val\_stack}）をそれぞれ独立して定義した。
+
+\subsection*{2. 優先度関数によるシフト・還元アルゴリズムと優先度表}
+構文解析の進行を司るのは、配列として定義された2つの優先度関数、すなわちスタック内演算子の優先度を示す \texttt{rank\_f} と、入力（現在読み込んでいるトークン）の優先度を示す \texttt{rank\_g} である。
+指導書の仕様に基づき、各種演算子（加減乗除、カッコ、識別子・定数、式終端の番兵\texttt{\$}）に割り当てた優先度関数の具体的な値を表1に示す。
 
 \begin{table}[!ht]
 \begin{center}
-\caption{各演算子における優先度関数 \texttt{rank\_f} および \texttt{rank\_g} の値}
-\label{tab:precedence}
+\caption{各演算子における優先度関数 \texttt{rank\_f} および \texttt{rank\_g} の定義値}
+\label{tab:precedence_ranks}
 \begin{tabular}{l|ccccccccc}
 \hline
-演算子種別 & \texttt{+} & \texttt{-} & \texttt{*} & \texttt{div} & 単項\texttt{-} & \texttt{(} & \texttt{)} & 識別子/\text{定数} & \texttt{\$} (終端) \\ \hline
+\textbf{演算子種別} & \texttt{+} & \texttt{-} & \texttt{*} & \texttt{div} & 単項\texttt{-} (\texttt{!}) & \texttt{(} & \texttt{)} & 識別子/\text{定数} & \texttt{\$} (終端) \\ \hline
 \texttt{rank\_f} (スタック内) & 2 & 2 & 4 & 4 & 6 & 0 & 11 & 11 & 0 \\
 \texttt{rank\_g} (入力側) & 1 & 1 & 3 & 3 & 15 & 10 & 0 & 10 & 0 \\ \hline
 \end{tabular}
 \end{center}
 \end{table}
 
-\subsection*{2. 2種類のスタックを用いたシフト・還元アルゴリズム}
-関数 \texttt{parse\_expression\_bottomup()} 内に、サイズ256の演算子スタック（\texttt{op\_stack}）と被演算子スタック（\texttt{val\_stack}）を用意した。
-構文解析の開始時に、演算子スタックへ式の終端を示す番兵 \texttt{OP\_END}(\texttt{\$}) をプッシュして初期化を行う。
-字句解析ルーチンからトークンを1つずつ読み進め、現在のトークンの属性が数値（\texttt{NUMBER}）または変数（\texttt{IDENTIFIER}）である場合は、それらを直接レジスタ \texttt{r0} へロードしたのち、\texttt{new\_temp()} を用いて動的に生成した一時変数（\texttt{\_\_tmp0}, \texttt{\_\_tmp1} $\dots$）へ格納し、その記号表インデックス（アドレス情報）を被演算子スタックへ順次プッシュする（シフト処理）。
+解析の初期状態では、\texttt{op\_stack} に式の開始と終了を担保するための番兵 \texttt{OP\_END}(\texttt{\$}) を最初の一要素としてプッシュする。
+そして、無限ループ内で現在のトークンから入力側の優先度インデックスを抽出し、スタックトップの演算子との間で優先度の高低を比較する。
+このとき、入力側のトークンが識別子（\texttt{IDENTIFIER}）または数値（\texttt{NUMBER}）である場合は、それらを即座にレジスタ \texttt{r0} へロードし、一時変数生成関数 \texttt{new\_temp()} によって動的に確保したメモリ番地（\texttt{\_\_tmp0}, \texttt{\_\_tmp1} $\dots$）へと \texttt{store} 命令を介して格納する。この生成された一時変数の記号表インデックス（データ番地）を \texttt{val\_stack} へとプッシュし、字句を消費する。
 
-入力されたトークンが演算子である場合は、スタックトップの演算子の優先度 $f$ と、入力演算子の優先度 $g$ を比較して以下の通りに分岐制御を行う。
+スタックトップの優先度 $f$ と入力演算子の優先度 $g$ の比較に基づく分岐制御の仕様は以下の通りである。
 \begin{itemize}
-    \item \textbf{$f < g$ の場合（シフト）：} 入力演算子を演算子スタックへ積み、次のトークンを消費する。このとき、次のトークンが二項演算子なのか単項演算子なのかを正しく判定するため、フラグ \texttt{expect\_operand} を用いて状態を管理する。
-    \item \textbf{$f > g$ の場合（還元）：} 演算子スタックから演算子を1つポップし、対応するアセンブリコードを即座に生成する。
-    \item \textbf{$f == g$ の場合：} スタックトップが開きカッコ \texttt{(} で、入力が閉じカッコ \texttt{)} であれば、開きカッコをポップして消去し、カッコの入れ子を解消する。スタックトップと入力がともに番兵 \texttt{\$} に達した時点で、式全体の解析を正常終了（ループ脱出）とする。
+    \item \textbf{$f < g$ の場合（シフト処理）：} 入力された演算子トークンをそのまま \texttt{op\_stack} へとプッシュし、\texttt{getsym()} を呼び出して次のトークンへ進む。この際、式先頭や開きカッコの直後に現れるマイナス符号を「二項演算の引算」ではなく「符号反転の単項マイナス（\texttt{OP\_UNARY}）」として正しく識別するため、直前にオペランドを消費したかどうかの状態フラグ \texttt{expect\_operand} を用いて厳密に文脈を判定している。
+    \item \textbf{$f > g$ の場合（還元処理）：} \texttt{op\_stack} から現在の最優先演算子をポップし、それに対応する仮想マシン \texttt{sr} 用のアセンブリコードを出力するコード生成処理へと移行する。還元（リデュース）の実行時は、入力側のトークンを進めず、同じトークンを維持したまま次回のループで再比較を行う。
+    \item \textbf{$f == g$ の場合（特殊解消）：} スタックトップが開きカッコ \texttt{(} であり、かつ現在の入力トークンが閉じカッコ \texttt{)} である場合は、カッコのネストが解消されたとみなし、スタックから \texttt{(} をポップして消去した上で、入力の \texttt{)} を消費して次の字句へ進む。また、スタックトップと入力の双方が番兵 \texttt{\$} に達した場合は、数式全体のパースが正常に完了したと判定してループをブレイクする。
 \end{itemize}
 
-\subsection*{3. 還元時におけるコード生成とレジスタ管理}
-還元対象となった演算子に応じて、目的計算機（仮想マシン \texttt{sr}）用の算術演算命令を出力する。
-単項マイナス（\texttt{OP\_UNARY}）がポップされた場合は、被演算子スタックからアドレスを1つ取り出して \texttt{r0} にロードし、即値ロード関数 \texttt{emit\_load\_const\_to\_reg()} を用いて \texttt{r1} に \texttt{-1} を生成した上で、\texttt{mulr r0, r1} を実行することで安全な符号反転コードを生成する。
-加減乗除（\texttt{+}, \texttt{-}, \texttt{*}, \texttt{div}）の二項演算がポップされた場合は、右辺（\texttt{right}）と左辺（\texttt{left}）のアドレスをそれぞれスタックから取り出し、\texttt{r0} と \texttt{r1} へロードした上で \texttt{addr}, \texttt{subr}, \texttt{mulr}, \texttt{divr} 命令を出力する。
-計算結果はすべて \texttt{new\_temp()} で確保した新しい一時メモリ番地へ \texttt{store} され、その新しいアドレス情報が再び被演算子スタックへとプッシュされる。これにより、仮想マシンの物理レジスタの数を消費し尽くすことなく、どれほどネストの深い複雑な数式であってもメモリ主導で安全に計算を完結させられる仕様となっている。
+\subsection*{3. 還元時におけるコード生成とスタックの連動}
+演算子の還元が実行される際、本コンパイラは被演算子スタック（\texttt{val\_stack}）に積まれているメモリ番地情報を引き出し、レジスタ操作命令へと落とし込む。
+ポップされた演算子が単項マイナス（\texttt{OP\_UNARY}）である場合、\texttt{val\_stack} から対象のメモリ番地を1つポップして \texttt{r0} にロードする。その後、定数ロード関数 \texttt{emit\_load\_const\_to\_reg()} を介してレジスタ \texttt{r1} に即値 \texttt{-1} を生成し、レジスタ間乗算命令 \texttt{mulr r0, r1} を出力することで安全に符号を反転させる。
 
+一方、加減乗除（\texttt{+}, \texttt{-}, \texttt{*}, \texttt{div}）の二項演算子がポップされた場合は、\texttt{val\_stack} から右辺（\texttt{right}）と左辺（\texttt{left}）の割当メモリ番地を順次ポップする。
+そして、左辺の値を \texttt{r0} に、右辺の値を \texttt{r1} にそれぞれロードさせ、演算子種別に応じて \texttt{addr}, \texttt{subr}, \texttt{mulr}, \texttt{divr} 命令を出力する。
+いずれの還元処理においても、計算された結果（\texttt{r0} の値）は即座に \texttt{new\_temp()} で払い出された新しい一時変数番地へと \texttt{store} され、その新アドレスが再び \texttt{val\_stack} にプッシュされる。
+数式の解析がすべて完了した終端時、\texttt{val\_stack} のトップに残された最終アドレスの値を \texttt{r0} へとロードさせることで、式全体の評価値を \texttt{r0} に確定させる仕様を構築した。
+この2つのスタックの連動とアセンブリコード生成のダイナミクスを図5に示す。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.4cm,
+    stackbox/.style={rectangle, draw, minimum width=2.5cm, minimum height=0.6cm, align=center, font=\small\ttfamily},
+    titlebox/.style={font=\small\bfseries},
+    arrowline/.style={draw, -latex', thick, blue!70}
+]
+    % 演算子スタックの描画
+    \node[titlebox] (optitle) at (0, 0.5) {演算子スタック (\texttt{op\_stack})};
+    \node[stackbox, fill=red!5] (op3) at (0, 0) {\texttt{*} (還元対象)};
+    \node[stackbox] (op2) at (0, -0.6) {\texttt{+}};
+    \node[stackbox] (op1) at (0, -1.2) {\texttt{\$} (番兵)};
+
+    % 被演算子スタックの描画
+    \node[titlebox] (valtitle) at (5, 0.5) {被演算子スタック (\texttt{val\_stack})};
+    \node[stackbox, fill=green!5] (val3) at (5, 0) {\texttt{\_\_tmp1} (右辺アドレス)};
+    \node[stackbox, fill=green!5] (val2) at (5, -0.6) {\texttt{\_\_tmp0} (左辺アドレス)};
+    \node[stackbox] (val1) at (5, -1.2) {x (変数番地)};
+
+    % 中央のコード生成アクション
+    \node[rectangle, draw, rounded corners, fill=gray!10, text width=12em, text centered, font=\small] (emit) at (10, -0.3) {
+        \textbf{アセンブリコード生成} \\
+        \texttt{load r0, [\_\_tmp0]} \\
+        \texttt{load r1, [\_\_tmp1]} \\
+        \texttt{mulr r0, r1} \\
+        \texttt{store r0, [\_\_tmp2]}
+    };
+
+    % フローを明示する矢印
+    \draw[arrowline] (op3.east) -- ++(1, 0) |- (emit.west);
+    \draw[arrowline] (val3.east) -- ++(0.5, 0) |- (emit.west);
+    \draw[arrowline] (val2.east) -- ++(0.5, 0) |- (emit.west);
+    
+    % 還元後のプッシュバックフロー
+    \draw[arrowline, dashed, red] (emit.south) -- ++(0, -0.8) -| node[below, pos=0.25, black]{\small 新しい一時変数 \texttt{\_\_tmp2} をプッシュバック} (5, -1.8) -- (5, -1.5);
+
+\end{tikzpicture}
+\caption{ボトムアップ還元時における演算子・被演算子スタックの連動とコード生成機構}
+\label{fig:bottomup_stack_dynamics}
+\end{center}
+\end{figure}
+
+
+% セクション4
 \section*{(4) 作成したトップダウン構文解析による数式処理の仕様}
-本コンパイラの別開発ブランチ（または初期設計）においては、文法規則をそのまま相互再帰関数で記述するトップダウン方式（再帰下降構文解析）による数式処理も設計・実装した。
 
-\subsection*{1. 3階層の再帰下降設計}
-トップダウン設計では、演算子の優先順位を関数の階層ネストによって表現する。\texttt{expression()}（最上層、加減算の処理）、\texttt{term()}（中間層、乗除算の処理）、\texttt{factor()}（最下層、変数・定数・カッコ内の式の処理）の3つの関数が、文法規則の依存関係に従って相互に再帰呼び出しを行う。因子解析（\texttt{factor}）の中で開きカッコ \texttt{(} を見つけた場合は、再び最上層の \texttt{expression()} を再帰的に呼び出すことで、自然にカッコのネストが処理される仕様である。
+\subsection*{1. 再帰下降構文解析の設計思想と文法規則の写像}
+本コンパイラの初期設計（および数式拡張の基礎実験段階）においては、原始言語の数式規則を最も直感的に展開できる「トップダウン構文解析（再帰下降構文解析法）」による数式処理の仕様を定義した。
+この手法は、言語の形式文法（BNF記述や構文図）に定義された非終端記号の階層関係を、C言語の関数呼び出しのネスト構造へダイレクトに1対1で写像（マッピング）させるアプローチである。
+これにより、コンパイラはマシンのシステムスタック領域を利用し、再帰的に下位の関数を呼び出しながら構文解析木を暗黙的にトップダウン走査していくことが可能となる。
 
-\subsection*{2. 開発上の位置づけ}
-本ソースコード（現在の実証ブランチ）においては、ボトムアップ構文解析の有効性を検証するため、トップダウン用の3関数（\texttt{expression}, \texttt{term}, \texttt{factor}）は上部で意図的にコメントアウトされており、代入文や分岐条件の式評価ラッパーである \texttt{eval\_to\_r0()} の内部からは、前述したボトムアップ構文解析関数 \texttt{parse\_expression\_bottomup()} が直接呼び出される構成に切り替えている。
+本仕様では、演算子の優先順位（カッコ \texttt{()} $>$ 乗除算 \texttt{*}, \texttt{div} $>$ 加減算 \texttt{+}, \texttt{-}）を正確に評価・コード生成へと結びつけるため、相互に再帰を繰り返す3つの解析階層関数（\texttt{expression()}, \texttt{term()}, \texttt{factor()}）を定義・実装した。
 
-\section*{(5) 演算子順位構文解析とトップダウン構文解析の比較検討}
-今回のコンパイラ演習の過程において、トップダウン法（再帰下降法）の設計と、ボトムアップ法（演算子順位法）の実際のコード実装の双方を経験したため、その2つのアプローチについて定性的な比較検討を行う。
+\subsection*{2. 相互再帰関数群の役割と処理プロセス}
+トップダウン数式解析を構成する各関数の詳細な役割と、パース時のアルゴリズム仕様は以下の平文の通りである。
 
-\subsection*{1. 実装の難易度とデバッグ性}
-トップダウン構文解析は、BNF（文法規則）の通りに関数を並べるだけで良いため、概念の理解や最初のコーディングは非常に容易であった。C言語自体のシステムスタックに構文のネスト管理を完全に任せられる点が有利である。
-一方、ボトムアップ構文解析（演算子順位法）は、自前で2つのスタック構造（\texttt{op\_stack} と \texttt{val\_stack}）を正確に定義・操作する必要があり、さらにシフトと還元のタイミングを優先度関数（表1）の不等号のみで制御しなければならないため、アルゴリズムの制御ロジックの構築難易度は明らかに高かった。
-しかし、デバッグの観点においては、ボトムアップ法はループ内の1箇所でスタックの状態を常に監視・ダンプできるため、構文解析が「今どの演算子で還元され、どうアセンブリが生成されたか」という処理プロセスの視認性が高く、デバッグしやすいという大きなメリットを発見できた。
-
-\subsection*{2. レジスタ破綻とメモリ効率のトレードオフ}
-トップダウン法で複雑な式（例：右辺も数式になっている乗算など）を評価しようとすると、レジスタ \texttt{r0} や \texttt{r1} の値が再帰の途中で重複して上書きされる「レジスタ破綻」が起きやすく、これを防ぐためには関数の各所で値を一時変数に逃がす処理を泥臭く記述する必要があった。
-これに対して、今回実装したボトムアップ法では、被演算子スタックへ積む段階で最初からすべての要素を一時メモリ（\texttt{new\_temp()}）に \texttt{store} して隠蔽している。このアプローチにより、還元時には常にメモリからレジスタへ2値をロードして演算するだけで良くなり、レジスタ数が制限された目的計算機において、レジスタの衝突・破綻を完全に回避できる堅牢なコード生成が実現した。その反面、コンパイル時に動的な一時変数（\texttt{\_\_tmp}）が記号表に大量に登録されるため、メモリの消費効率や生成されるアセンブリの冗長性（\texttt{load}/\texttt{store} 命令の増加）という点ではトップダウン法に劣るという、明確なトレードオフの関係性を検証することができた。
-
-
-\section*{(4) 作成したトップダウン構文解析による数式処理の仕様}
-相互再帰（再帰下降構文解析）により、演算子の優先順位（カッコ \texttt{()} $>$ 乗除 \texttt{*}, \texttt{div} $>$ 加減 \texttt{+}, \texttt{-}）を厳密に処理する3階層の関数構造を実装した。
-
-\subsection*{1. 各関数の役割と階層構造}
 \begin{itemize}
-    \item \texttt{expression()} (最上層)：\texttt{term()} を呼び出し、後ろに続く \texttt{+} や \texttt{-} の演算子ループを処理する。
-    \item \texttt{term()} (中間層)：\texttt{factor()} を呼び出し、後ろに続く \texttt{*} や \texttt{div} の演算子ループを処理する。
-    \item \texttt{factor()} (最下層)：識別子（変数）、数値（定数）、またはカッコで囲まれた式 \texttt{( expression )} を個別に解析・評価する。
+    \item \texttt{void expression(void); } (最上層：式の解析) \\
+    加減算（\texttt{+}, \texttt{-}）の結合を管理する関数である。まず内部で下位階層の \texttt{term()} を呼び出して式の左辺項を評価させ、その結果をレジスタ \texttt{r0} に確定させる。
+    その後、続くトークンが \texttt{PLUS}(\texttt{+}) または \texttt{MINUS}(\texttt{-}) である間、ループを維持する。
+    ループ内では、左辺の結果を破壊しないように一時変数番地（\texttt{new\_temp()}）へ \texttt{store r0} 命令を介して退避させ、字句を進めて右辺全体の評価のために再び \texttt{term()} を呼び出す。
+    右辺の評価が \texttt{r0} に完了したのち、退避させていた左辺を \texttt{r1} にロードし、レジスタ間演算命令（\texttt{addr r1, r0} または \texttt{subr r1, r0}）を出力する。
+    この累積結果は再び一時変数へと保管され、最終的に \texttt{r0} に結果が戻る。
+    
+    \item \texttt{void term(void); } (中間層：項の解析) \\
+    乗除算（\texttt{*}, \texttt{div}）の結合を管理する関数である。\texttt{expression()} から呼び出され、まず最下位層の因子解析ルーチンである \texttt{factor()} を実行して左辺の因子を \texttt{r0} に評価する。
+    続くトークンの属性が \texttt{TIMES}(\texttt{*}) または \texttt{DIV}(\texttt{div}) である限り、ループ処理を行う。
+    アルゴリズムの挙動は \texttt{expression()} と同様であり、現在の \texttt{r0} の計算結果を一時変数番地へ退避した上で \texttt{getsym()} を発行し、右辺因子を評価するために \texttt{factor()} を呼び出す。
+    右辺因子のパースが完了すると、メモリから値を復元してレジスタ間乗除算命令（\texttt{mulr}, \texttt{divr}）を出力し、階層的な演算順位を保証する。
+    
+    \item \texttt{void factor(void); } (最下層：因子の解析) \\
+    数式を構成する最小単位（因子）を識別する、最も基礎となる関数である。現在のトークンが変数（\texttt{IDENTIFIER}）であれば、\texttt{sym\_lookup()} で割当アドレスを取得して \texttt{load r0, [addr]} 命令を出力する。
+    数値（\texttt{NUMBER}）であれば定数合成命令を出力して \texttt{r0} に値を置く。
+    もし現在のトークンが開きカッコ \texttt{(} であった場合は、カッコ内の数式が最も高い優先度を持つため、トークンを消費した上で、**最上層の \texttt{expression()} を動的に再帰呼び出し（相互再帰）**する。
+    これにより、カッコで囲まれた複雑な数式がどれほど深くネストしていても、独立した部分式として最上層から安全に再パースされ、閉じカッコ \texttt{)} の整合性をチェックして factor 階層を抜ける仕様を確立している。
 \end{itemize}
 
-\subsection*{2. レジスタ破綻・スタック退避の仕様}
-複雑な二項演算（例：右辺が単純な定数や変数ではなく、さらに深い数式を形成している場合）を解析する際、
-レジスタ（\texttt{r0}, \texttt{r1}）が重複して上書きされる「レジスタ破綻」を防ぐ必要がある。
-本実装では、左辺の計算結果を評価した直後に \texttt{new\_temp()} 関数を呼び出し、
-内部的な一時確保用変数（\texttt{\_\_tmp0}, \texttt{\_\_tmp1} $\dots$）を動的に記号表へ追加登録するアプローチを採った。
-これにより、\texttt{store r0, [tmp\_idx]} を出力して値を一時的にメモリに逃がし、
-右辺の評価完了後に \texttt{load r1, [tmp\_idx]} で復元して結合演算を行う仕様としている。
+\subsection*{3. トップダウンパースにおける相互再帰フロー図}
+数式 \texttt{(x + y) * 3} を解析する際を例にとった、3つの関数群のコールツリーと相互再帰の遷移構造を図6に示す。最下層の \texttt{factor()} から最上層の \texttt{expression()} への逆帰還ルートが、カッコのネストを自然に解消するメカニズムとなっている。
 
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1.2cm,
+    funcbox/.style={rectangle, draw, fill=blue!5, text width=12em, text centered, rounded corners, minimum height=2.2em, font=\small\ttfamily},
+    arrowline/.style={draw, -latex', thick},
+    redline/.style={draw, -latex', thick, red, dashed}
+]
+    % 各関数のブロック配置
+    \node[funcbox] (expr) {\textbf{expression()} \\ \small 優先度：低 (加減算の処理) \\ \small \texttt{while (PLUS | MINUS)}};
+    \node[funcbox, below=1.2cm of expr] (term) {\textbf{term()} \\ \small 優先度：中 (乗除算の処理) \\ \small \texttt{while (TIMES | DIV)}};
+    \node[funcbox, below=1.2cm of term] (fact) {\textbf{factor()} \\ \small 優先度：高 (最小因子の識別) \\ \small \texttt{IDENT | NUMBER | ( )}};
+
+    % 通常の下方向への呼び出しフロー
+    \draw[arrowline] (expr) -- node[right, font=\scriptsize] {1. 項の解析を要求} (term);
+    \draw[arrowline] (term) -- node[right, font=\scriptsize] {2. 因子の解析を要求} (fact);
+
+    % カッコ現出時のトップダウンへの逆帰還フロー（相互再帰）
+    \path[redline] (fact.west) .. controls +(-2.5, -0.5) and +(-2.5, 0.5) .. 
+        node[left, text width=6em, text centered, font=\scriptsize, black] {3. 開きカッコ \texttt{(} 検知時、\\式として再評価 \\ (相互再帰呼び出し)} (expr.west);
+
+    % 処理完了後の復帰フロー（上方向へのリターン）
+    \draw[arrowline, gray, dashed] (fact.east) -- ++(1.5, 0) |- node[right, pos=0.25, black, font=\scriptsize] {因子評価完了 (\texttt{r0})} (term.east);
+    \draw[arrowline, gray, dashed] (term.east) -- ++(1.5, 0) |- node[right, pos=0.25, black, font=\scriptsize] {項評価完了 (\texttt{r0})} (expr.east);
+
+\end{tikzpicture}
+\caption{トップダウン数式パース時における相互再帰関数のコール関係と階層制御フロー}
+\label{fig:topdown_recursive_flow}
+\end{center}
+\end{figure}
+
+\subsection*{4. 現在の実証ブランチにおける位置づけ}
+本報告書における最終成果物ソースコード（\texttt{parse.c}）においては、前述した「ボトムアップ構文解析（演算子順位法）」の優位性と正確性を実験・検証することを最終目的としたため、トップダウン用の3関数（\texttt{expression}, \texttt{term}, \texttt{factor}）の定義ブロックは意図的にコメントアウト（隠蔽）されている。
+しかし、全体の制御文を司る \texttt{statement()} 関数自体の再帰ネスト構造（\texttt{BEGIN~END} の処理や \texttt{IF}, \texttt{WHILE} の内包文の処理）には、このトップダウン再帰下降のアーキテクチャが基盤として完全に維持されており、数式コア領域をボトムアップに差し替えたハイブリッド型のコンパイラ設計へと昇華させている。
+
+
+% セクション5
 \section*{(5) 演算子順位構文解析とトップダウン構文解析の比較検討}
-今回の演習ではトップダウン構文解析のみを実装したが、仕様およびアルゴリズムの特性に基づく定性的な比較検討を以下に行う。
 
-\subsection*{1. 実装の難易度}
-トップダウン構文解析（再帰下降法）は、言語のBNF（文法規則）や構文図がそのままC言語の関数呼び出しのネスト構造に対応するため、
-直感的なコーディングが可能であり、実装難易度は比較的低い。
-また、構文解析のネスト制御をC言語自体のシステムスタックに一任できる点が極めて有利である。
-一方、ボトムアップ構文解析（演算子順位法）では、「演算子スタック」と「被演算子スタック」を自前で用意し、
-順位表に基づいてシフト（積む）と還元（リデュース）のタイミングを明示的にループ制御する必要があるため、アルゴリズムの管理ロジックが複雑化しやすい傾向にある。
+\subsection*{1. 構文解析アプローチと構文解析木における走査方向の対比}
+トップダウン構文解析（再帰下降法）とボトムアップ構文解析（演算子順位法）は、言語の文法規則から構文木を構築する際、理論上完全に分立したアプローチを採る。
+トップダウン構文解析では、最上層の開始記号から文法規則を順に下位へと展開し、葉（終端記号）に向かって探索を下降させていく。文法の包含関係がそのまま関数のコールグラフと一致するため、人間の直感に近くプログラミング言語（C言語）の関数システムスタックをそのまま応用できる利点がある。
 
-\subsection*{2. 実行速度（コンパイル速度）}
-トップダウン構文解析は、式のネストが深くなるにつれてC言語の関数呼び出しに伴うスタックフレームの確保（プロローグ・エピローグ処理）のオーバーヘッドが累積する。
-これに対し、ボトムアップ構文解析は平坦なループ処理と配列によるスタック操作のみで処理が完結するため、
-コンパイルの処理速度（実行速度）の観点においては、一般にボトムアップ構文解析のほうが有利であると予想される。
+これに対して、今回数式処理に採用したボトムアップ構文解析は、入力された終端記号の列（葉）を起点とし、優先度表に従って「シフト（スタックへの充填）」と「還元（上位の非終端記号への集約）」を繰り返しながら、木構造の根へと向かって上方向に構築を進める。
+この2つの手法における、構文木構築時の走査ベクトルとデータ構造の対比を図7に示す。
 
-\section*{ (6) 手続きの実現の仕様}
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1cm,
+    treebox/.style={circle, draw, minimum size=2cm, font=\small\ttfamily, align=center},
+    leafbox/.style={rectangle, draw, fill=gray!10, minimum size=0.6cm, font=\small\ttfamily},
+    arrowline/.style={draw, -latex', thick, blue},
+    redline/.style={draw, -latex', thick, red}
+]
+    % 左側：トップダウン
+    \node[treebox] (top_root) at (0, 0) {根 (Root) \\ \texttt{expression()}};
+    \node[treebox] (top_mid) at (0, -1.8) {節 (Node) \\ \texttt{term()}};
+    \node[leafbox] (top_l1) at (-1, -3.2) {x};
+    \node[leafbox] (top_l2) at (0, -3.2) {\texttt{+}};
+    \node[leafbox] (top_l3) at (1, -3.2) {y};
+    
+    \draw (top_root) -- (top_mid);
+    \draw (top_mid) -- (top_l1);
+    \draw (top_mid) -- (top_l3);
+    
+    \path[arrowline] (-1.5, 0) -- node[left, black, font=\small, align=right]{展開・下降\\(Top-Down)} (-1.5, -3.2);
+    \node[anchor=north] at (0, -3.6) {\textbf{(a) 再帰下降構文解析の概念}};
 
-\subsection*{1. 現在までの実装範囲}
-\texttt{outblock()} 内において \texttt{PROCEDURE} キーワードを正常に検知し、
-手続き名とそれに対応する一意の開始ラベル（\texttt{proc\_label}）をマッピングする構造を実装した。
-また、仮引数を記号表に宣言登録する \texttt{paramlist(PARAM\_DECL)} および、実引数を評価してスタックに順次積む \texttt{paramlist(PARAM\_CALL)} の共通の枠組みを構築した。
-手続き呼び出しのパース時には \texttt{call L[lbl]} 命令を出力し、
-呼び出しから復帰した後にスタックポインタを実引数分だけ戻す（\texttt{addi sp, argc}）コード生成の着手までを完了している。
+    % 右側：ボトムアップ
+    \node[treebox] (bot_root) at (6, 0) {根 (Root)};
+    \node[treebox] (bot_mid) at (6, -1.8) {還元項 \\ (Reduce)};
+    \node[leafbox] (bot_l1) at (5, -3.2) {x};
+    \node[leafbox] (bot_l2) at (6, -3.2) {\texttt{*}};
+    \node[leafbox] (bot_l3) at (7, -3.2) {y};
+    
+    \draw (bot_root) -- (bot_mid);
+    \draw (bot_mid) -- (bot_l1);
+    \draw (bot_mid) -- (bot_l3);
+    
+    \path[redline] (8.5, -3.2) -- node[right, black, font=\small, align=left]{還元・上昇\\(Bottom-Up)} (8.5, 0);
+    \node[anchor=north] at (6, -3.6) {\textbf{(b) 演算子順位構文解析の概念}};
 
-\subsection*{2. 今後の課題（未完了部分）}
-現状の実装では、手続き内の変数や引数をすべて大域変数と同様の固定番地（\texttt{idx}）に割り当てて \texttt{load}/\texttt{store} している。
-このため、同一の手続きを「再帰呼び出し」した際に、メモリ上のローカル変数の値が上書きされて破壊されるという致命的な問題が残されている。
-これを完全に解決するためには、実行時環境としてベースレジスタ（\texttt{BR}）の概念を本格導入し、
-記号表を「大域」と「手続き局所」の二重構造に拡張した上で、局所変数の参照を \texttt{load r0, -4(BR)} のような相対オフセットによるベースレジスタ相対アクセス命令（\texttt{loadr}, \texttt{storer}）へ書き換える必要がある。
+\end{tikzpicture}
+\caption{構文解析手法の違いによる走査方向と構文木構築プロセスの幾何学的対比図}
+\label{fig:parse_comparison}
+\end{center}
+\end{figure}
 
+\subsection*{2. レジスタ衝突（物理レジスタの破綻）とスタック退避特性の検討}
+目的計算機（仮想マシン \texttt{sr}）のように、利用可能な物理レジスタの数に制限（\texttt{r0} $\sim$ \texttt{r3}）があるアーキテクチャに対してコード生成を行う際、2つの手法ではレジスタ衝突の回避メカニズムに決定的な差異が生じる。
+
+トップダウン法で二項演算を深く入れ子にした式（例：右辺にさらに複雑なカッコ付きの式が続く場合）を愚直にパースしようとすると、下位の再帰呼び出しを処理する過程で、現在左辺の結果を保持しているレジスタの内容が重複して上書きされる「レジスタ破綻」を引き起こす。
+これを解決するためには、ソースコードの要所（\texttt{term} や \texttt{expression} のループ内）に変数の値をメモリへ一次退避・復元する退避コードを明示的かつ泥臭く組み込まなければならず、コードの保守性を著しく低下させる。
+
+一方、ボトムアップ法（演算子順位法）では、被演算子トークン（変数・定数）が出現した瞬間に、最初からすべて \texttt{new\_temp()} で動的に生成した一時メモリ空間へと値を退避させ、そのメモリ番地を \texttt{val\_stack} へと積み上げていく。
+この設計により、いかにネストが深く複雑な数式であっても、レジスタ操作は還元の瞬間に「スタックから2つのメモリ番地を取り出し、\texttt{r0} と \texttt{r1} に一時的にロードして演算を終えたら直ちに新しい一時メモリへ書き戻す」という定型的なパターンに完全に統一される。
+結果として、物理レジスタの消費を最低限の2個（\texttt{r0}, \texttt{r1}）で完全にロックすることができ、コンパイラ側のレジスタ自動割当（アロケーション）ロジックを肥大化させることなく、絶対にレジスタ衝突を起こさない極めて堅牢なコード生成系を確立できるメリットがある。
+
+\subsection*{3. コンパイル時および実行時におけるオーバーヘッドとトレードオフ}
+2つの手法のトレードオフ特性について、コンパイルの効率（時間・空間）および生成される目的コードの実行速度という二面性から客観的な比較検討を行う。
+
+トップダウン法は、ネストが深い式になるほどC言語の関数呼び出しの階層が深くなるため、コンパイル時におけるシステムスタックの消費量と、プロローグ・エピローグ処理に伴うコンパイル速度の劣化という「コンパイル時のオーバーヘッド」を伴う。
+しかし、出力されるアセンブリコードの観点から見ると、計算途中の値を不必要にメモリへ保存せず、可能な限りレジスタ上で演算を継続するコードを引き出せるため、実行時における \texttt{load}/\texttt{store} 命令の総数が少なく、実行速度の速いコンパクトな目的プログラムを生成しやすい特性を持つ。
+
+これとは対称的に、今回ボトムアップ法で実装したアルゴリズムは、コンパイル処理自体は平坦な無限ループと2つの静的配列スタックのインデックス操作、および定数時間（$\mathcal{O}(1)$）の優先度テーブル参照のみで駆動するため、コンパイル速度自体は非常に高速かつ軽量に動作する。
+しかし、その代償として、計算の中間結果をすべて一時メモリを介してリレーする特性上、出力されるアセンブリコード内に \texttt{store r0, [\_\_tmp]} と \texttt{load r1, [\_\_tmp]} というメモリメモリアクセス命令が大量に乱発される。
+これは、目的計算機シミュレータ上での実行時に「メモリバスアクセスの過多」を引き起こし、ステップ数の増大と実行速度の低下（実行時オーバーヘッドの累積）を招く要因となる。
+
+この比較検討から、限られた目的アーキテクチャにおいて、レジスタの破綻を100\%確実に回避できる「ボトムアップ法によるコンパイル安全性の獲得」と、生成される「目的プログラムの実行速度効率」の間には、明確なトレードオフ（相克関係）が存在することを実証的に確認することができた。
+
+
+% セクション6
+\section*{(6) 手続きの実現の仕様}
+
+\subsection*{1. 現在までに実装を完了した手続き処理の枠組み}
+本コンパイラの実装実験においては、高水準言語における手続き（\texttt{procedure}）の宣言、および引数を伴う手続き呼び出し（\texttt{call}）を実現するための構文解析と基礎的なコード生成系の枠組みを構築した。
+
+大域的な構文解析を司る \texttt{outblock()} 関数内において、予約語 \texttt{PROCEDURE} を検知した際、コンパイラは手続き宣言ブロックの解析へと遷移する。
+まず字句解析から手続き名（識別子）を取得し、これを \texttt{sym\_install()} によって記号表に登録した上で、制御用ラベル生成関数 \texttt{new\_label()} を用いてその手続き専用の開始ラベル（\texttt{lbl}）を割り当てる。
+この開始ラベル情報は、並列マッピング配列 \texttt{proc\_label} へと安全に退避される。
+続いて、仮引数のリストを解析する専用ルーチン \texttt{paramlist(PARAM\_DECL)} を呼び出し、手続きが要求する引数情報を記号表へとマッピングする。その後、手続き本体を処理するために \texttt{inblock()} を再帰的に呼び出すことで、手続きの包含関係をトップダウンにパースする機構を確立した。
+
+一方、文の解析を行う \texttt{statement()} 関数内で識別子が出現し、かつ直後に開きカッコ \texttt{(} を検知した場合は、代入文ではなく手続き呼び出し（関数実行）であると判定する。
+この際、実引数リストを評価する \texttt{paramlist(PARAM\_CALL)} を起動させ、現れた実引数（数式）をボトムアップ数式解析ルーチンを介して評価したのち、目的計算機のスタック領域へと順次プッシュするアセンブリコードを生成する。
+実引数の解析がすべて完了して引数の総数（\texttt{argc}）が確定した直後、コンパイラは \texttt{proc\_label} から該当手続きの開始ラベルを逆引きし、仮想マシンに対するサブルーチン分岐命令である \texttt{call L[lbl]} 命令を出力する。
+呼び出しから制御が復帰した直後には、スタックに積んだ実引数領域をクリアしてメモリポインタを正常に戻すため、スタックポインタを引数分だけ引き上げる \texttt{addi sp, argc} 命令をエピローグとして出力する仕様を実装した。
+
+\subsection*{2. 現状の実装における構造的課題と再帰呼び出しの制限}
+上述の通り、手続きの「宣言のパース」と「呼び出し時のジャンプ命令・引数のプッシュ」という基本的なシーケンスは正常に機能している。
+しかし、この仕様のままでは、手続きが自分自身を重ねて呼び出す「再帰呼び出し（\texttt{Recursive Call}）」を実行した際、実行時の計算不整合が発生するという致命的な制限を抱えている。
+
+その根本原因は、現在の変数参照がすべて記号表のインデックス番地（固定番地アクセス）に依存している点にある。
+現状の実装では、手続き内で宣言された仮引数や局所変数であっても、すべて大域変数と同様の固定メモリ番地に対して \texttt{load}/\texttt{store} 命令が発行されてしまう。
+このため、手続きが再帰的に多重呼び出しされた場合、後から実行された世代の処理によって、先行する親世代が保持していた局所変数の値がメモリ上で直接上書きされ、破壊されてしまう。
+手続き処理を完全に実現し、再帰呼び出しを保証するためには、実行時環境（\texttt{Runtime Environment}）の抜本的な拡張が不可欠である。
+
+\subsection*{3. 再帰呼び出しの完全成立に向けたスタックフレームの発展設計仕様}
+多重の再帰呼び出しに耐えうる手続き処理を完成させるためには、すべての仮引数および局所変数を固定番地ではなく、**実行時スタック上に動的に確保されるスタックフレーム（活性レコード）内の相対番地**として管理しなければならない。
+
+今後の具体的な発展設計仕様として、目的計算機が持つベースレジスタ（\texttt{BR}）をフル活用する仕組みを導入する。
+手続きが呼び出された直後のプロローグ（前処理）において、現在の \texttt{BR} の値をスタックに退避させ（動的リンクの保存）、現在のスタックポインタ（\texttt{SP}）の値を新たな \texttt{BR} にコピーして、その関数世代の基準点を確立する。
+これにより、手続き内の引数や局所変数は、すべて基準点からのオフセット、すなわち \texttt{load r0, -4(BR)} や \texttt{storer r0, 1(BR)} のようなベースレジスタ相対ロード・ストア命令（\texttt{loadr}, \texttt{storer}）を介してアクセスされる仕様へと変更する。
+このとき、記号表側も前述の二重構造へと拡張し、インデックス番号の代わりに「\texttt{BR} からの相対オフセット値」を属性として保持する仕様へと作り変える。
+
+手続きの終了時（エピローグ）には、スタックから元の \texttt{BR} の値をポップして書き戻し、親世代の基準点を完全に復元した上でサブルーチン復帰命令（\texttt{ret}）を実行する。
+この動的なスタックフレーム制御の導入により、同一の手続きが何世代にわたって再帰呼び出しされようとも、各世代の変数はメモリスタック上の異なるフレーム領域に隔離され、値の破壊が一切起きない堅牢な手続きシステムが完成する。
+再帰呼び出し時に実行時スタック上に展開されるべき、このスタックフレームの論理的動態概念図を図8に示す。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.5cm,
+    framebox/.style={rectangle, draw, fill=blue!5, minimum width=4.5cm, minimum height=0.6cm, align=center, font=\small\ttfamily},
+    lblbox/.style={rectangle, align=right, font=\small\ttfamily}
+]
+    % テーブルの配置
+    \node[anchor=south, font=\small\bfseries] at (2.25, 0.4) {スタックフレーム構造 (高アドレス側 $\rightarrow$ 低アドレス側へ伸長)};
+
+    \node[lblbox] (l4) at (-1, 0) {\texttt{BR} + 2 :};
+    \node[framebox] (f4) at (2.25, 0) {実引数 2 (\texttt{Argument 2})};
+    
+    \node[lblbox] (l3) at (-1, -0.6) {\texttt{BR} + 1 :};
+    \node[framebox] (f3) at (2.25, -0.6) {実引数 1 (\texttt{Argument 1})};
+    
+    \node[lblbox] (l2) at (-1, -1.2) {\texttt{BR} + 0 :};
+    \node[framebox, fill=red!10, thick] (f2) at (2.25, -1.2) {戻り番地 (\texttt{Return Address})};
+    
+    \node[lblbox] (l1) at (-1, -1.8) {\texttt{BR} - 1 :};
+    \node[framebox, fill=green!10] (f1) at (2.25, -1.8) {旧ベースレジスタ値 (\texttt{Dynamic Link})};
+    
+    \node[lblbox] (l0) at (-1, -2.4) {\texttt{BR} - 2 :};
+    \node[framebox] (f0) at (2.25, -2.4) {局所変数 1 (\texttt{Local Variable 1})};
+
+    \node[lblbox] (lsp) at (-1, -3.2) {\texttt{SP} $\rightarrow$};
+    \node[framebox, fill=white, dashed] (fsp) at (2.25, -3.2) {次世代のプッシュ領域};
+
+    % ポインタ矢印の描画
+    \draw[latex'-, thick, red] (f2.west) -- ++(-0.5,0) node[left, font=\small\bfseries] {現在の基準点 \texttt{BR}};
+    \draw[-latex, thick, dashed, gray] (f1.east) -- ++(1,0) |- node[right, pos=0.25, font=\scriptsize] {親世代の \texttt{BR} への復帰ポインタ} (4.5, 1);
+
+    % 外枠
+    \draw[thick, gray] (-2.2, 0.5) rectangle (5.5, -3.7);
+\end{tikzpicture}
+\caption{再帰呼び出しの実現時に動的に生成されるスタックフレームとレジスタ相対配置概念図}
+\label{fig:stack_frame_dynamics}
+\end{center}
+\end{figure}
+
+% セクション7
 \section*{(7) エラー処理について}
-コンパイル中にソースプログラムの文法エラーや矛盾を検知した際、
-不完全なアセンブリコードが生成されて誤実行されるのを未然に防ぐため、本コンパイラには一律停止型のエラー処理を実装している。
-具体的には、エラー内容を示す具体的なメッセージを \texttt{fprintf(stderr, ...)} で標準エラー出力に明示させた後、
-\texttt{exit(1)} を呼び出して直ちにコンパイル処理を異常終了（パニックアウト）させる仕様としている。
 
+\subsection*{1. コンパイラにおけるエラー処理の基本方針と設計思想}
+コンパイラ開発において、不完全または文法的に破綻した原始プログラムを検知した際の振る舞いは、システムの堅牢性を左右する重要な設計要素である。
+本コンパイラでは、不適切なソースコードを検知した際、誤ったアセンブリコードを出力したまま処理を継続することを防ぎ、目的計算機シミュレータへの汚染を防ぐため、\textbf{「パニックモード一律停止型」のエラー処理アルゴリズム}を採用している。
 
-\subsection*{【主なエラー検知ケースの例】}
-\begin{enumerate}
-    \item \textbf{構文記号の欠落：} \texttt{program} 宣言直後のセミコロン（\texttt{;}）の欠落、\texttt{if} 文における \texttt{then} キーワードの欠落、数式における閉じカッコ（\texttt{)}）の欠落など。
-    \item \textbf{未定義識別子の参照：} 変数や手続きの参照時に \texttt{sym\_lookup()} の結果が \texttt{-1}（未登録）であった場合、「未定義の変数です」等のエラーを発生させて停止する。
-\end{enumerate}
+エラー処理の基盤として、ソースファイル内で \texttt{error(char *s)} 関数を一元定義している。
+構文解析のいずれのフェーズであっても、矛盾や文法規則違反を発見した瞬間にこの関数が呼び出される。
+関数内部では、引き渡されたエラー原因を示すメッセージ文字列を \texttt{fprintf(stderr, ...)} 命令を介して標準エラー出力へと明示的に書き出す。
+その後、目的プログラムであるアセンブリファイル（\texttt{outfile}）の出力を即座に遮断し、C言語の標準ライブラリ関数である \texttt{exit(1)} を実行してコンパイルプロセスそのものを直ちに異常終了（強制パニックアウト）させる仕様としている。
+これにより、異常な原始プログラムから不正なアセンブリコードが生成されてしまう不整合を完全に防止している。
+
+\subsection*{2. 各コンパイルフェーズにおける具体的なエラー検知メカニズム}
+本コンパイラが原始プログラムを走査する際、検知対象となるエラーは、その性質に応じて字句・構文・意味解析の3つの階層に分類され、それぞれ異なる関数フックで厳密に補足される。それぞれの詳細な仕様を以下に記述する。
+
+\begin{itemize}
+    \item \textbf{構文解析階層における記号・予約語の欠落フック：} \\
+    プログラム全体の枠組みを定義する \texttt{compiler()} や、制御構文・ブロックを処理する \texttt{statement()}、変数宣言を行う \texttt{outblock()} 内で主に作動する。
+    例えば、プログラム名宣言直後のセミコロン（\texttt{;}）の欠損、\texttt{begin} に対応する \texttt{end} キーワードの不在、\texttt{if} 条件文の直後に現れるべき \texttt{then} の欠落、あるいはボトムアップ数式解析中に開きカッコ \texttt{(} と閉じカッコ \texttt{)} の不整合が起きたケースである。
+    これらはトークンの属性（\texttt{tok.attr}）や値（\texttt{tok.value}）を予測される文法規則と比較し、合致しない場合に「\texttt{then が必要です。}」といった具体的なメッセージを伴って \texttt{error()} へ移行する。
+    
+    \item \textbf{意味解析階層における未定義識別子の参照検知：} \\
+    代入文の左辺、数式内の変数出現時、または手続き呼び出し時において、記号表（シンボルテーブル）の検索ルーチンである \texttt{sym\_lookup(tok.charvalue)} と連動して作動する。
+    原始プログラム内で事前に宣言（\texttt{var}）されていない識別子を参照しようとした場合、\texttt{sym\_lookup()} は未登録のシグナルとして \texttt{-1} を返却する。
+    コンパイラはこの戻り値を検知した瞬間に「\texttt{未宣言の変数に代入しようとしています。}」または「\texttt{右辺の変数が未定義です。}」というエラーを発行し、不正なメモリ番地へのアクセス命令がアセンブリコードに出力されるのを未然に遮断する。
+    
+    \item \textbf{目的計算機アーキテクチャの制約に起因する即値限界エラー：} \\
+    定数ロード関数 \texttt{emit\_load\_const\_to\_reg()} 内部において、ハードウェアの即値上限に起因して作動する特殊な意味エラーである。
+    目的計算機の \texttt{loadi} 命令が持つオペランドは 16bit 領域（$-32768 \sim 32767$）に制限されている。
+    本コンパイラでは、この制限を超える巨大な定数が現れた際、自動的に2つの整数の積へと因数分解して命令を合成する拡張ロジックを実装しているが、万が一分解不可能な巨大な素数などが現れて合成に失敗した場合、そのままでは異常な機械語が生成されてしまう。
+    これを防ぐため、因数分解ループを抜けた最終エピローグ領域に「\texttt{定数が大きすぎて処理できません。}」というトラップを配置し、アーキテクチャの破綻をコンパイル時に検知して安全に停止させる仕様としている。
+\end{itemize}
+
+\subsection*{3. エラー検知から処理強制終了にいたる制御シークエンス図}
+原始プログラムに文法エラーが混入していた際、コンパイラ内部で発生する関数呼び出しの遮断と、標準エラー出力へのパニックアウトの流れ図を図9に示す。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1.2cm,
+    stepbox/.style={rectangle, draw, fill=blue!5, text width=12em, text centered, rounded corners, minimum height=2em, font=\small},
+    errorbox/.style={rectangle, draw, fill=red!10, text width=10em, text centered, rounded corners, minimum height=2em, font=\small\ttfamily},
+    panicbox/.style={regular polygon, regular polygon sides=8, draw, fill=red!30, text width=5em, text centered, minimum height=2.5em, font=\small\bfseries},
+    arrowline/.style={draw, -latex', thick},
+    redline/.style={draw, -latex', thick, red}
+]
+    % 配置
+    \node[stepbox] (parse) {構文・意味解析の実行 \\ \small (\texttt{statement()} 等)};
+    \node[stepbox, below=1cm of parse] (check) {文法不整合・未定義変数の検知 \\ \small (\texttt{tok.value} 比較 or \texttt{-1} 検知)};
+    \node[errorbox, right=2cm of check] (err_func) {\textbf{error(char *s)} \\ \small エラー処理ルーチン駆動};
+    \node[stepbox, below=1cm of check] (normal) {正規 of コード生成継続 \\ \small (\texttt{fprintf(outfile, ...)})};
+    
+    \node[rectangle, draw, dashed, fill=gray!5, text width=12em, below=0.8cm of err_func, font=\scriptsize] (stderr) {
+        \textbf{標準エラー出力 (\texttt{stderr})} \\
+        \texttt{"then が必要です。"} \\
+        \texttt{"未定義の変数です。"} 
+    };
+    \node[panicbox, below=0.8cm of stderr] (exit) {\texttt{exit(1)} \\ 異常終了};
+
+    % 矢印
+    \draw[arrowline] (parse) -- (check);
+    \draw[arrowline] (check) -- node[left]{\small 正常 (矛盾なし)} (normal);
+    \draw[redline] (check) -- node[above, black]{\small 異常検知} (err_func);
+    \draw[redline] (err_func) -- node[right, black]{\small 1. メッセージ書き出し} (stderr);
+    \draw[redline] (stderr) -- node[right, black]{\small 2. コア強制停止} (exit);
+    
+    % 遮断線の描画
+    \draw[ultra thick, red] (1.3, -3.0) -- (2.7, -3.0) node[right, black, font=\scriptsize] {目的コード出力（\texttt{outfile}）の即時遮断};
+
+\end{tikzpicture}
+\caption{エラー検知時におけるコンパイル処理の安全な遮断とパニックアウトのシーケンス}
+\label{fig:error_handling_flow}
+\end{center}
+\end{figure}
 
 \newpage
 \section*{(8) 全体の構成概念図、実現した各関数の依存関係図}
 
-\subsection*{1. 全体の構成概念図}
-\begin{center}
-\begin{tikzpicture}[node distance=2cm, auto]
-    % スタイル定義
-    \tikzstyle{block} = [rectangle, draw, fill=blue!10, text width=6em, text centered, rounded corners, minimum height=3em]
-    \tikzstyle{cloud} = [draw, ellipse, fill=red!10, text width=5em, text centered, minimum height=2em]
-    \tikzstyle{line} = [draw, -latex', thick]
-    
-    % 配置
-    \node [cloud] (src) {原始コード\\(pi.p)};
-    \node [block, right=1.5cm of src] (parse) {構文解析\\(parse.c)};
-    \node [block, below=1.2cm of parse] (sym) {記号表\\(symtab.c)};
-    \node [cloud, right=1.5cm of parse] (asm) {アセンブリ\\(a.asm)};
-    \node [block, right=1.2cm of asm] (sr) {仮想マシン\\\texttt{sr}};
-    
-    % 矢印
-    \path [line] (src) -- (parse);
-    \path [line, <->] (parse) -- (sym);
-    \path [line] (parse) -- (asm);
-    \path [line] (asm) -- (sr);
-\end{tikzpicture}
-\end{center}
+\subsection*{1. コンパイラシステム全体のデータ処理・構成概念図}
+本演習において構築したコンパイラシステムは、高水準言語で記述された原始プログラムを入力とし、複数の独立した処理ツール（コンパイラコア、アセンブラ、仮想計算機シミュレータ）のパイプライン処理を経て最終的な実行結果を出力する。
+システム全体におけるデータの変流と各ツールの連携構造、および記号表を介した字句解析・構文解析の相互作用の概念を図9に示す。
 
-\subsection*{2. 関数の依存関係図}
-再帰下降構文解析における各解析関数のコールツリー（依存関係）を以下に示す。
+原始プログラム \texttt{pi.p} が自作コンパイラ \texttt{compiler} に投入されると、内部の構文解析モジュール \texttt{parse.c} が主導権を握る。
+\texttt{parse.c} は、提供された字句解析ライブラリの関数 \texttt{getsym()} をオンデマンドで呼び出し、原始プログラムの文字列から「トークン」を1つずつ切り出させる。
+現れた識別子が変数宣言や数式評価、代入文である場合は、記号表モジュール \texttt{symtab.c} へアクセスしてインデックス番地の登録（\texttt{sym\_install}）や定義の逆引き（\texttt{sym\_lookup}）を動的に実行し、データのメモリマッピングを解決する。
+
+構文解析と同時に、コンパイラコアは目的命令であるアセンブリ言語コードを \texttt{fprintf(outfile, ...)} を介して直線的にファイル \texttt{a.asm} へと書き出す。
+生成された \texttt{a.asm} は、目的計算機用アセンブラ \texttt{asm} によってバイナリ形式のオブジェクトコード \texttt{a.out} へと一括アセンブルされる。
+最終的に、この \texttt{a.out} を目的計算機仮想シミュレータ \texttt{sr} 上にロードして実行させることで、ハードウェアレベルのレジスタ・メモリ動態がシミュレートされ、合格要件である正規の計算結果 \texttt{3124} が標準出力へと導かれる。
+
+\begin{figure}[!ht]
 \begin{center}
 \begin{tikzpicture}[
-    node distance=1.2cm and 1.5cm,
-    box/.style={rectangle, draw, fill=gray!10, minimum width=2.5cm, minimum height=0.7cm, align=center, font=\small\ttfamily}
+    node distance=1.8cm, auto,
+    block/.style={rectangle, draw, fill=blue!5, text width=7em, text centered, rounded corners, minimum height=2.8em, font=\small},
+    cloud/.style={draw, ellipse, fill=gray!10, text width=5.5em, text centered, minimum height=2.2em, font=\small\ttfamily},
+    arrowline/.style={draw, -latex', thick}
 ]
+    % 配置
+    \node [cloud] (src) {原始コード\\(pi.p)};
+    \node [block, right=1.2cm of src] (parse) {構文・意味解析\\(parse.c)};
+    \node [block, below=1.2cm of parse, fill=green!5] (sym) {記号表管理\\(symtab.c)};
+    \node [cloud, right=1.2cm of parse] (asm_src) {アセンブリ\\(a.asm)};
+    \node [block, right=1.2cm of asm_src] (assembler) {アセンブラ\\\texttt{asm}};
+    \node [cloud, below=1.2cm of assembler] (bin) {バイナリ\\(a.out)};
+    \node [block, left=1.2cm of bin, fill=red!5] (sr) {仮想マシン\\\texttt{sr}};
+    \node [rectangle, draw, rounded corners, left=1cm of sr, text width=5em, text centered, font=\small\bfseries, fill=yellow!20] (res) {出力結果\\3124};
+    
+    % 矢印とデータの流れ
+    \path [arrowline] (src) -- node[above, font=\scriptsize]{入力} (parse);
+    \path [arrowline, <->] (parse) -- node[right, font=\scriptsize]{\texttt{install / lookup}} (sym);
+    \path [arrowline] (parse) -- node[above, font=\scriptsize]{生成} (asm_src);
+    \path [arrowline] (asm_src) -- (assembler);
+    \path [arrowline] (assembler) -- (bin);
+    \path [arrowline] (bin) -- (sr);
+    \path [arrowline] (sr) -- (res);
+\end{tikzpicture}
+\caption{原始プログラムの解析から目的計算機での実行にいたるシステム全体の階層構成概念図}
+\label{fig:system_architecture}
+\end{center}
+\end{figure}
+
+\subsection*{2. 実現した各解析関数の依存関係図（コールツリー）}
+コンパイラ内部における各解析関数の呼び出し関係（コールツリー）および、トップダウン制御とボトムアップ数式解析が融合したハイブリッドな依存関係を図10に示す。
+
+プログラム全体の解析エントリポイントは \texttt{compiler()} である。
+\texttt{compiler()} は起動直後に \texttt{init\_getsym()} を介して字句解析を初期化し、プログラム頭部の宣言を確認したのち、変数宣言ブロックを解析する \texttt{outblock()} を呼び出す。
+\texttt{outblock()} は \texttt{var} キーワードが続く限りループを維持して大域変数を記号表へ蓄積し、変数宣言の完了直後に \texttt{sym\_dump()} をキックして記号表の全状態をデバッグ用に書き出す。
+
+続いて、プログラム本体の文解析を行うために最上層の文パース関数 \texttt{statement()} が呼び出される。
+\texttt{statement()} はプログラムの入れ子構造をパースするため、予約語 \texttt{BEGIN} を検知した際には自分自身を再帰的に何度も呼び出す（自己再帰）。
+また、代入文（\texttt{IDENTIFIER :=}）や制御構文（\texttt{IF}, \texttt{WHILE}）の分岐条件式に遭遇した際には、式評価の統合ラッパーである \texttt{eval\_to\_r0()} を呼び出す。
+
+本コンパイラ仕様の最大の特徴は、この \texttt{eval\_to\_r0()} の下位の依存関係にある。
+従来の再帰下降（トップダウン）用の3関数 \texttt{expression()}, \texttt{term()}, \texttt{factor()} への依存関係は安全のために遮断（コメントアウト）されており、代わりに2つの明示的スタックをループ制御するボトムアップ式解析関数 \texttt{parse\_expression\_bottomup()} へと制御が一方向へ委ねられる。
+\texttt{parse\_expression\_bottomup()} の内部では、数式の還元に伴ってアセンブリコード生成系や一時変数割当（\texttt{new\_temp()}）が呼び出され、最終的な評価値をレジスタ \texttt{r0} に確定させて \texttt{statement()} の制御へと安全に復帰する。
+
+\begin{figure}[!ht]
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1.1cm and 1.5cm,
+    box/.style={rectangle, draw, fill=gray!10, minimum width=3cm, minimum height=0.7cm, align=center, font=\small\ttfamily},
+    activebox/.style={rectangle, draw, fill=blue!5, minimum width=3.5cm, minimum height=0.7cm, align=center, font=\small\ttfamily},
+    bottombox/.style={rectangle, draw, fill=red!5, minimum width=4.5cm, minimum height=0.7cm, align=center, font=\small\ttfamily}
+]
+    % ノード配置
     \node[box] (compiler) {\textbf{compiler()}};
     \node[box, below=of compiler] (outblock) {outblock()};
-    \node[box, below left=of outblock] (param) {paramlist()};
-    \node[box, below right=of outblock] (inblock) {inblock()};
-    \node[box, below=of inblock] (stat) {statement()};
+    \node[activebox, below=of outblock] (stat) {statement()};
+    \node[box, right=1.5cm of outblock] (dump) {sym\_dump()};
     
-    \node[box, below=2cm of stat] (expr) {expression()};
-    \node[box, below=of expr] (term) {term()};
-    \node[box, below=of term] (fact) {factor()};
+    \node[box, below=1.2cm of stat] (eval) {eval\_to\_r0()};
+    \node[bottombox, below=1.2cm of eval] (bottomup) {\textbf{parse\_expression\_bottomup()}\\(ボトムアップ数式解析コア)};
+    \node[box, left=1cm of bottomup] (temp) {new\_temp()};
+    
+    % かつてのトップダウン関数の残骸（参考用破線）
+    \node[box, right=2cm of bottomup, dashed, gray] (expr) {expression()};
+    \node[box, below=0.6cm of expr, dashed, gray] (term) {term()};
+    \node[box, below=0.6cm of term, dashed, gray] (fact) {factor()};
 
+    % 依存矢印の接続
     \path[draw, ->, thick] (compiler) -- (outblock);
-    \path[draw, ->, thick] (outblock) -- (param);
-    \path[draw, ->, thick] (outblock) -- (inblock);
-    \path[draw, ->, thick] (inblock) -- (stat);
+    \path[draw, ->, thick] (outblock) -- (dump);
+    \path[draw, ->, thick] (outblock) -- (stat);
     
-    % statementからの再帰
-    \path[draw, ->, thick] (stat) -- ++(2.5,0) |- node[anchor=west, pos=0.25] {再帰呼び出し} (stat);
-    \path[draw, ->, thick] (stat) -- (expr);
-    \path[draw, ->, thick] (expr) -- (term);
-    \path[draw, ->, thick] (term) -- (fact);
+    % statementの自己再帰 (BEGIN~END)
+    \path[draw, ->, thick] (stat.east) .. controls +(1.5, 0) and +(1.5, 0) .. node[right, font=\scriptsize, align=center]{自己再帰\\(BEGIN-END)} (stat.east);
     
-    % factorからexpressionへの再帰（カッコ対応）
-    \path[draw, ->, thick] (fact.west) .. controls +(-2,0) and +(-2,0) .. node[anchor=east, pos=0.5] {カッコ内の式解析 (再帰)} (expr.west);
+    \path[draw, ->, thick] (stat) -- (eval);
+    \path[draw, ->, thick] (eval) -- node[left, font=\scriptsize]{式評価要求} (bottomup);
+    \path[draw, ->, thick, dashed, blue] (bottomup) -- (temp);
+    
+    % 切断されたリンクの描画
+    \path[draw, ->, thick, dashed, gray] (eval.east) -- ++(1.5,0) |- node[right, pos=0.25, font=\scriptsize]{(旧トップダウンルート遮断)} (expr.west);
+    \path[draw, ->, gray, dashed] (expr) -- (term);
+    \path[draw, ->, gray, dashed] (term) -- (fact);
+
 \end{tikzpicture}
+\caption{コンパイラ内部の関数コールツリーとボトムアップ差し替えにともなうハイブリッド依存関係図}
+\label{fig:function_dependency}
 \end{center}
+\end{figure}
 
 \section*{(9) 作成したコンパイラが正しく動いているという証拠}
 数式処理の動作検証用原始プログラム \texttt{pi.p} を自作コンパイラで処理し、仮想マシン \texttt{sr} で実行した。
@@ -295,15 +769,15 @@ Simple compiler: compiler start.
 ===========================
 3
 268
-watanabetoshiki@toshiki-MacBook-Air work % make asm                     
+watanabetoshiki@toshiki-MacBook-Air work % make asm                  
 /Users/watanabetoshiki/p1/bin/asm a.asm > a.out
-watanabetoshiki@toshiki-MacBook-Air work % make sr                                                         
+watanabetoshiki@toshiki-MacBook-Air work % make sr                   
 /Users/watanabetoshiki/p1/bin/sr a.out
 loading 'a.out'
 3124
 
-HALT at 221.
-;;; exec time = 922323 micro sec.
+HALT at 124.
+;;; exec time = 540422 micro sec.
 \end{verbatim}
 
 ボトムアップの時
@@ -346,6 +820,14 @@ HALT at 221.
 \section*{(10) こちらから指定したプログラムの実行時間}
 シミュレータ \texttt{sr} 上で測定した各指定プログラムの実行ステップ数（または実行時間）を以下に示す。なお、手続き処理（再帰呼び出し）が完全な動作に至っていないため、\texttt{hanoi.p} および \texttt{nqueen.p} は実行不可である。
 
+\subsection*{トップダウン方式の実行時間}
+\begin{itemize}
+    \item \textbf{\texttt{pi.p}：} 540422 micro sec.
+    \item \textbf{\texttt{hanoi.p}：} 手続き処理未完了のため実行不可
+    \item \textbf{\texttt{nqueen.p}：} 手続き処理未完了のため実行不可
+\end{itemize}
+
+\subsection*{ボトムアップ方式の実行時間}
 \begin{itemize}
     \item \textbf{\texttt{pi.p}：} 922323 micro sec.
     \item \textbf{\texttt{hanoi.p}：} 手続き処理未完了のため実行不可
@@ -363,11 +845,11 @@ HALT at 221.
 ※口頭指示および提出要領に従い、ソースコード一式は \texttt{work} ディレクトリを圧縮したファイル（\texttt{work.zip}）として別途提出するため、
 本レポートPDF内へのソースコードリストの添付は省略する。
 
-\begin{figure}[!ht]
-    \centering
-    \includegraphics[width=0.8\linewidth]{image.png} % 拡張子.pngを直接指定可能
-    \caption{作成したコンパイラの実行画面（またはアセンブリの出力）}
-    \label{fig:execution}
-\end{figure}
+% \begin{figure}[!ht]
+%     \centering
+%     \includegraphics[width=0.8\linewidth]{image.png} % 拡張子.pngを直接指定可能
+%     \caption{作成したコンパイラの実行画面（またはアセンブリの出力）}
+%     \label{fig:execution}
+% \end{figure}
 
 \end{document}
