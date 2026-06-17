@@ -1,71 +1,128 @@
-jmp L1
+loadi r0, 0
+store r0, 0
+loadi r0, 0
+store r0, 5
+loadi r0, 3827
+store r0, 1
+loadi r0, 8358
+store r0, 2
+loadi r0, 3797
+store r0, 3
 L0:
 load r0, 0
-cmpi r0, 1
-jnz L2
+cmpi r0, 1000
+jge L1
+load r0, 1
+store r0, 8
 load r0, 2
-writed r0
-loadi r1, 32
-writec r1
-load r0, 3
-writed r0
-loadi r1, 10
-writec r1
-jmp L3
-L2:
+load r1, 8
+addr r1, r0
+store r1, 8
+load r0, 8
+load r1, 3
+mulr r0, r1
+store r0, 9
+load r0, 1
+store r0, 10
 load r0, 2
-push r0
-load r0, 4
-push r0
-load r0, 3
-push r0
-load r0, 0
+load r1, 10
+addr r1, r0
+store r1, 10
+load r0, 10
+load r1, 3
+mulr r0, r1
+loadi r1, 4
+muli r1, 25000
+divr r0, r1
+loadi r1, 4
+muli r1, 25000
+mulr r0, r1
+load r1, 9
+subr r1, r0
+store r1, 9
+load r0, 9
+store r0, 1
+load r0, 1
+divi r0, 10
+store r0, 1
+load r0, 1
+divi r0, 10
 store r0, 6
-loadi r0, 1
-load r1, 6
-subr r1, r0
-store r1, 6
-load r0, 6
-push r0
-call L0
-addi sp, 4
+load r0, 1
+store r0, 11
 load r0, 2
-writed r0
+load r1, 11
+addr r1, r0
+store r1, 11
+load r0, 11
+load r1, 3
+mulr r0, r1
+store r0, 12
+load r0, 1
+store r0, 13
+load r0, 2
+load r1, 13
+addr r1, r0
+store r1, 13
+load r0, 13
+load r1, 3
+mulr r0, r1
+loadi r1, 4
+muli r1, 25000
+divr r0, r1
+loadi r1, 4
+muli r1, 25000
+mulr r0, r1
+load r1, 12
+subr r1, r0
+store r1, 12
+load r0, 12
+store r0, 1
+load r0, 1
+divi r0, 10
+store r0, 1
+load r0, 1
+divi r0, 10
+store r0, 7
+load r0, 6
+load r1, 6
+mulr r0, r1
+store r0, 14
+load r0, 7
+load r1, 7
+mulr r0, r1
+load r1, 14
+addr r1, r0
+store r1, 14
+load r0, 14
 loadi r1, 32
-writec r1
-load r0, 3
+muli r1, 31250
+cmpr r0, r1
+jge L2
+load r0, 5
+store r0, 15
+loadi r0, 1
+load r1, 15
+addr r1, r0
+store r1, 15
+load r0, 15
+store r0, 5
+L2:
+load r0, 0
+store r0, 16
+loadi r0, 1
+load r1, 16
+addr r1, r0
+store r1, 16
+load r0, 16
+store r0, 0
+jmp L0
+L1:
+load r0, 5
+muli r0, 4
+store r0, 4
+load r0, 4
 writed r0
 loadi r1, 10
 writec r1
-load r0, 4
-push r0
-load r0, 3
-push r0
-load r0, 2
-push r0
-load r0, 0
-store r0, 7
-loadi r0, 1
-load r1, 7
-subr r1, r0
-store r1, 7
-load r0, 7
-push r0
-call L0
-addi sp, 4
-L3:
-halt
-L1:
-loadi r0, 5
-store r0, 0
-loadi r0, 1
-push r0
-loadi r0, 2
-push r0
-loadi r0, 3
-push r0
-load r0, 0
-push r0
-call L0
-addi sp, 4
 halt

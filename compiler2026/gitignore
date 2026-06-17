@@ -1,0 +1,13 @@
+# 编译產物 / オブジェクトファイル
+*.o
+*.cmx
+*.cmi
+*.cmo
+
+# 実行ファイル（成果物）
+a.out
+compiler
+*.exe
+
+# OSが自動生成する非表示ファイル（Mac用）
+.DS_Store
