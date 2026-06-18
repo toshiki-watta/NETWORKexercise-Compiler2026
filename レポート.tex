@@ -7,7 +7,7 @@
 \usepackage{listings}
 \usepackage{url}
 \usepackage{tikz}
-\usetikzlibrary{shapes.geometric, arrows, positioning}
+\usetikzlibrary{shapes.geometric, arrows, positioning, calc}
 
 % --- コード表示用のスタイル設定 ---
 \definecolor{dkgreen}{rgb}{0,0.6,0}
@@ -139,17 +139,20 @@
 \begin{center}
 \begin{tikzpicture}[
     node distance=1cm,
-    tablebox/.style={rectangle, draw, fill=blue!5, minimum width=3.5cm, minimum height=1.5cm, align=center, font=\small},
+    % 横幅を広げ、text width を指定してボックス内で自動折り返しさせる
+    tablebox/.style={rectangle, draw, fill=blue!5, minimum width=4cm, text width=3.8cm, minimum height=1.6cm, align=center, font=\small},
     arrowline/.style={draw, -latex', thick}
 ]
-    % スコープ記号表の概念配置
+    % スコープ記号表の概念配置 (間隔を適正化)
     \node[tablebox] (local) {局所記号表 \\ (手続き内スコープ) \\ \small [引数・局所変数の管理]};
-    \node[tablebox, right=2cm of local, fill=green!5] (global) {大域記号表 \\ (プログラム全体スコープ) \\ \small [プログラム名・グローバル変数の管理]};
+    \node[tablebox, right=1.5cm of local, fill=green!5] (global) {大域記号表 \\ (プログラム全体スコープ) \\ \small [プログラム名・大域変数の管理]};
 
-    % 探索順序のフロー矢印
-    \draw[arrowline] (-2.5, 0) -- node[above]{\small 識別子出現} (local.west);
-    \draw[arrowline] (local.east) -- node[above]{\small 1. まず探索} node[below]{\small (見つからない場合)} (global.west);
-    \draw[arrowline] (global.east) -- ++(1.5, 0) node[right, align=left]{\small アドレス確定 \\ \small (大域番地 or BR相対)};
+    % 探索順序のフロー矢印とテキスト配置の調整
+    \draw[arrowline] (-3.5, 0) -- node[above]{\small 識別子出現} (local.west);
+    \draw[arrowline] (local.east) -- node[above]{\small 1. まず探索} node[below, yshift=-0.1cm]{\small (未発見時)} (global.west);
+    
+    % 右側への矢印の長さを 2.5cm に広げて文字の重なりを解消
+    \draw[arrowline] (global.east) -- ++(0.5, 0) node[right, align=left, font=\small] {アドレス確定 \\ (大域番地 or \\ BR相対オフセット)};
 \end{tikzpicture}
 \caption{手続き拡張時に求められる記号表の二重スコープ構造案}
 \label{fig:double_symtab}
@@ -545,7 +548,7 @@
     \node[framebox, fill=white, dashed] (fsp) at (2.25, -3.2) {次世代のプッシュ領域};
 
     % ポインタ矢印の描画
-    \draw[latex'-, thick, red] (f2.west) -- ++(-0.5,0) node[left, font=\small\bfseries] {現在の基準点 \texttt{BR}};
+    \draw[latex'-, thick, red] (f2.west) -- ++(-2.5,0) node[left, font=\small\bfseries] {現在の基準点 \texttt{BR}};
     \draw[-latex, thick, dashed, gray] (f1.east) -- ++(1,0) |- node[right, pos=0.25, font=\scriptsize] {親世代の \texttt{BR} への復帰ポインタ} (4.5, 1);
 
     % 外枠
@@ -607,7 +610,7 @@
     \node[stepbox] (parse) {構文・意味解析の実行 \\ \small (\texttt{statement()} 等)};
     \node[stepbox, below=1cm of parse] (check) {文法不整合・未定義変数の検知 \\ \small (\texttt{tok.value} 比較 or \texttt{-1} 検知)};
     \node[errorbox, right=2cm of check] (err_func) {\textbf{error(char *s)} \\ \small エラー処理ルーチン駆動};
-    \node[stepbox, below=1cm of check] (normal) {正規 of コード生成継続 \\ \small (\texttt{fprintf(outfile, ...)})};
+    \node[stepbox, below=1.5cm of check] (normal) {正規のコード生成継続 \\ \small (\texttt{fprintf(outfile, ...)})};
     
     \node[rectangle, draw, dashed, fill=gray!5, text width=12em, below=0.8cm of err_func, font=\scriptsize] (stderr) {
         \textbf{標準エラー出力 (\texttt{stderr})} \\
@@ -618,13 +621,15 @@
 
     % 矢印
     \draw[arrowline] (parse) -- (check);
-    \draw[arrowline] (check) -- node[left]{\small 正常 (矛盾なし)} (normal);
+    \draw[arrowline] (check) -- node[left, pos=0.4]{\small 正常 (矛盾なし)} (normal);
     \draw[redline] (check) -- node[above, black]{\small 異常検知} (err_func);
     \draw[redline] (err_func) -- node[right, black]{\small 1. メッセージ書き出し} (stderr);
     \draw[redline] (stderr) -- node[right, black]{\small 2. コア強制停止} (exit);
     
-    % 遮断線の描画
-    \draw[ultra thick, red] (1.3, -3.0) -- (2.7, -3.0) node[right, black, font=\scriptsize] {目的コード出力（\texttt{outfile}）の即時遮断};
+    % 【修正】遮断線の描画
+    % check から normal へ進む「正常ルートの矢印」を真横に横断するように配置を変更しました
+    \draw[ultra thick, red] ($(check.south)!0.4!(normal.north)-(0.8cm,0)$) -- ($(check.south)!0.4!(normal.north)+(0.8cm,0)$);
+    \node[right, black, font=\scriptsize, text width=9em] at ($(check.south)!0.4!(normal.north)+(0.9cm,0)$) {目的コード出力（\texttt{outfile}）の即時遮断};
 
 \end{tikzpicture}
 \caption{エラー検知時におけるコンパイル処理の安全な遮断とパニックアウトのシーケンス}
@@ -657,16 +662,16 @@
 ]
     % 配置
     \node [cloud] (src) {原始コード\\(pi.p)};
-    \node [block, right=1.2cm of src] (parse) {構文・意味解析\\(parse.c)};
+    \node [block, below=1.2cm of src] (parse) {構文・意味解析\\(parse.c)};
     \node [block, below=1.2cm of parse, fill=green!5] (sym) {記号表管理\\(symtab.c)};
     \node [cloud, right=1.2cm of parse] (asm_src) {アセンブリ\\(a.asm)};
-    \node [block, right=1.2cm of asm_src] (assembler) {アセンブラ\\\texttt{asm}};
-    \node [cloud, below=1.2cm of assembler] (bin) {バイナリ\\(a.out)};
-    \node [block, left=1.2cm of bin, fill=red!5] (sr) {仮想マシン\\\texttt{sr}};
-    \node [rectangle, draw, rounded corners, left=1cm of sr, text width=5em, text centered, font=\small\bfseries, fill=yellow!20] (res) {出力結果\\3124};
+    \node [block, below=1.2cm of asm_src] (assembler) {アセンブラ\\\texttt{asm}};
+    \node [cloud, right=1.2cm of assembler] (bin) {バイナリ\\(a.out)};
+    \node [block, below=1.2cm of bin, fill=red!5] (sr) {仮想マシン\\\texttt{sr}};
+    \node [rectangle, draw, rounded corners, below=1cm of sr, text width=5em, text centered, font=\small\bfseries, fill=yellow!20] (res) {出力結果\\3124};
     
     % 矢印とデータの流れ
-    \path [arrowline] (src) -- node[above, font=\scriptsize]{入力} (parse);
+    \path [arrowline] (src) -- node[right, font=\scriptsize]{入力} (parse);
     \path [arrowline, <->] (parse) -- node[right, font=\scriptsize]{\texttt{install / lookup}} (sym);
     \path [arrowline] (parse) -- node[above, font=\scriptsize]{生成} (asm_src);
     \path [arrowline] (asm_src) -- (assembler);
@@ -841,9 +846,47 @@ HALT at 221.
 レジスタ上で \texttt{loadi} 命令と \texttt{muli} 命令を動的に組み合わせて目的の定数値を合成する関数 \texttt{emit\_load\_const\_to\_reg} を独自に設計・実装した。
 これにより、人間が手動で定数を分割定義することなく、巨大な定数を含む複雑な数式であっても安全にコンパイルを通すことが可能となった。
 
+\subsection*{静的変数を用いた再帰深度の動的追跡と halt 命令の一意出力制御}
+本コンパイラの文解析ルーチン \texttt{statement()} の実装において、
+プログラムの正常終了を司る \texttt{halt} 命令を「いかにしてアセンブリコードの真の最外層の終端にのみ1回だけ一意に出力させるか」という、
+コード生成制御上の課題に対して独自の工夫を行った。
+
+高水準言語における \texttt{BEGIN ~ END} ブロックや \texttt{IF}, \texttt{WHILE} などの制御構文は、
+内部に別の文を内包するため、\texttt{statement()} 関数が自分自身を何度も呼び出す「自己再帰構造」を形成する。
+もし単純に関数のエピローグ領域へ \texttt{halt} 命令の出力を記述してしまうと、
+入れ子構造の内側にある部分的な文の解析が完了して再帰スタックから復帰するたびに、
+アセンブリコードの途中に \texttt{halt} が不当に乱発され、シミュレータ上でプログラムが途中で強制終了してしまう破綻を招く。
+
+この課題をスマートに解決するため、C言語の \texttt{static} 変数の特質を応用した「再帰深度カウンタ」のロジックを関数内に独創的に組み込んだ。
+具体的には以下の制御シーケンスを実装している。
+\begin{lstlisting}[language=C, basicstyle=\small\ttfamily]
+static int depth = 0;
+int is_outer = (depth == 0); /* 最外層エントリポイントの判定 */
+depth++;
+
+/* --- 各種文（BEGIN, IF, WHILE, 代入文等）の構文解析とコード生成 --- */
+
+depth--;
+if (is_outer) {
+    fprintf(outfile, "halt\n"); /* 真の最外層終端でのみ1回だけ出力 */
+}
+\end{lstlisting}
+
+このアルゴリズムにより、コンパイラが最初にプログラム全体の文解析へ突入した最初の一歩（深度0）のタイミングでのみ、
+ローカルフラグ \texttt{is\_outer} に「真（1）」がロックされる。
+その後、どれほど深く \texttt{BEGIN} のネストが繰り返されてスタックフレームが積み上がろうとも、
+内側の呼び出し世代においては \texttt{depth > 0} となるため、フラグは一律で「偽（0）」に固定され、不要な \texttt{halt} の出力を完全に抑制する。
+
+そして、すべての構文解析が完了して再帰のネストが完全に巻き戻り、まさに「プログラム全体の解析を終えて脱出する最後の瞬間」にのみ、
+保持されていた \texttt{is\_outer} の条件が成立し、アセンブリの最末尾にのみ美しい \texttt{halt} 命令を1発だけ書き出す制御に成功した。
+コンパイラ全体のコード生成構造を肥大化させることなく、関数ローカルなスコープ内で再帰のライフサイクルを動的に追跡して目的コードの整合性を担保した、
+開発時の苦悩と試行錯誤が生んだ極めて実践的なアプローチである。
+
 \section*{(12) コンパイラのソースプログラムの全リストにコメントをつけたもの}
-※口頭指示および提出要領に従い、ソースコード一式は \texttt{work} ディレクトリを圧縮したファイル（\texttt{work.zip}）として別途提出するため、
+提出要領に従い、ソースコード一式は \texttt{work} ディレクトリを圧縮したファイル（\texttt{work.zip}）として別途提出するため、
 本レポートPDF内へのソースコードリストの添付は省略する。
+
+それぞれ実装をブランチを分けて管理していたため、二つのワークディレクトリを圧縮したzipファイルとして提出する。
 
 % \begin{figure}[!ht]
 %     \centering
