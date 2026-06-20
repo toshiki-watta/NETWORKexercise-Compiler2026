@@ -621,7 +621,7 @@
 
     % 矢印
     \draw[arrowline] (parse) -- (check);
-    \draw[arrowline] (check) -- node[left, pos=0.4]{\small 正常 (矛盾なし)} (normal);
+    \draw[arrowline] (check) -- node[left, pos=0.6]{\small 正常 (矛盾なし)} (normal);
     \draw[redline] (check) -- node[above, black]{\small 異常検知} (err_func);
     \draw[redline] (err_func) -- node[right, black]{\small 1. メッセージ書き出し} (stderr);
     \draw[redline] (stderr) -- node[right, black]{\small 2. コア強制停止} (exit);
