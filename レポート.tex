@@ -48,8 +48,7 @@
 \begin{itemize}
     \item \textbf{使用PC：} MacBook Air (M3, 2024)
     \item \textbf{OS：} macOS26
-    \item \textbf{Cコンパイラ：} gcc (GCC) 11.x
-    \item \textbf{開発ツール・ライブラリ：} GNU Make, 字句解析ライブラリ \texttt{libics.a}
+    \item \textbf{Cコンパイラ：} gcc (GCC) 
 \end{itemize}
 
 \noindent\rule{\linewidth}{0.4pt}
@@ -59,14 +58,13 @@
 \section*{(1) 最終的に作成した記号表の構造と操作関数の仕様}
 
 \subsection*{1. 記号表の構造とコンパイラにおける役割}
-記号表は、原始プログラム中に出現する変数や手続きなどの識別子（\texttt{IDENTIFIER}）を管理し、
-その属性や割当番地、スコープを保持するための極めて重要なデータ構造である。
+記号表には、原始プログラム中に出現する変数や手続きなどの識別子（\texttt{IDENTIFIER}）の属性、割当番地、スコープを登録する。
 本コンパイラの実装では、ヘッダファイル \texttt{symtab.h} およびソースファイル \texttt{symtab.c} に独立したモジュールとして管理機構を作成している。
 
 現在割り当てられている記号表は、最大登録数 \texttt{MAXSYMS}（32個）を上限とする1次元の構造体配列である。
 識別子名となる文字列 \texttt{char name[MAXIDLEN+1]} をキーとして持って、配列のインデックスそのものが、
-仮想マシン \texttt{sr}における大域変数の固定データメモリ番地に対応するマッピング構造をつかっている。
-また、数式評価の時に動的に生成される一時確保用の変数もこの記号表へ逐次追加登録して、一元的に番地管理がされる。
+仮想マシン \texttt{sr}における大域変数の固定データメモリ番地に対応するマッピングを利用している。
+また、数式評価の時に生成される一時確保用の変数もこの記号表へ逐次追加登録して、番地管理がされる。
 
 さらに、開発が間に合わなかった機能である「手続き（\texttt{PROCEDURE}）処理」への対応を見据え、
 手続き名とその開始ラベルの対応関係を保持する配列 \texttt{proc\_label} を記号表配列と並列にマッピングさせるなど取り組んでいる。
@@ -122,9 +120,9 @@
     未登録である場合は、現在カウントされている空きインデックス位置へ識別子名を登録し、その配列番号を返す。
     もし既に登録済みである場合は、二重登録を防ぐため既存のインデックス番号をそのまま返す仕様である。
     \item \texttt{int sym\_lookup(char *name); } \\
-    構文解析中に変数参照や代入文、あるいは条件式の評価文が現れたとき、指定された識別子名が既に宣言されているかを逆引きするための関数である。
+    構文解析中に変数参照や代入文、あるいは条件式の評価文が現れたとき、指定された識別子名が既に宣言されているかを探索するための関数である。
     記号表配列を前方から線形探索し、一致する名前が発見された場合はそのインデックスを返す。
-    探索の結果、表内に存在しない識別子であった場合は宣言エラーとみなして \texttt{-1} を返すアルゴリズムを採っている。
+    探索の結果、表内に存在しない識別子であった場合は宣言エラーとみなして \texttt{-1} を返すアルゴリズムを使っている。
     \item \texttt{void sym\_dump(void); } \\
     コンパイラ開発時およびプログラム検証時のデバッグ用関数である。
     原始プログラムの変数宣言ブロック（\texttt{outblock}）の解析が完了した直後に呼び出され、
@@ -133,18 +131,18 @@
 
 \subsection*{4. 手続き拡張への課題と二重構造化への展望}
 現在の1次元配列による記号表の仕様は、すべての変数を大域変数として管理する。
-この構造は、単純な数式処理や制御構文（\texttt{if}, \texttt{while}）の処理では破綻なく動作するものの、
+この構造は、単純な数式処理や制御構文（\texttt{if}, \texttt{while}）の処理では問題なく動作するものの、
 手続き呼び出し、とりわけ「再帰呼び出し」を正しく実現するにあたっては構造的な限界がある
 
-手続きが再帰的に呼び出される場合、各呼び出し世代ごとに独立した局所変数（および引数）の領域が実行時スタック上に動的に確保されなければならない。
+手続きが再帰的に呼び出される場合、各呼び出し世代ごとに独立した局所変数（および引数）の領域が実行時スタック上に確保されなければならない。
 しかし現状の記号表では、大域変数と手続き内の局所変数を識別・隔離する「スコープ」の情報がなく、
 同一の関数インデックスに対してすべての世代から固定番地アクセスが実行されてしまうため、再帰呼び出し時にローカル変数の値が上書きされてしまう。
 
-この課題を克服するためのアプローチとして、
+この課題を克服するための方法として、
 記号表内に識別子の属性（大域変数 \texttt{K\_GLOBAL}、局所変数 \texttt{K\_LOCAL}、手続き名 \texttt{K\_PROCEDURE}）を区別するメンバを追加する必要がある。
 その上で、図2に示すように記号表の全体を「大域記号表」と「手続き局所記号表」の二重構造へと拡張して、
 識別子探索の時には「まず現在コンパイル中の手続き局所表を逆順に探索し、
-発見されなかった場合のみ大域表を参照する」という対策を施した動的オフセット管理の導入が必要になると考える。
+発見されなかった場合のみ大域表を参照する」という対策の導入が必要になると考える。
 
 \begin{figure}[!ht]
 \begin{center}
@@ -179,10 +177,10 @@
 仮想マシン \texttt{sr}の命令セットアーキテクチャでは直接実行することができない。
 仮想マシンが持つジャンプ命令は、フラグ命令を参照して分岐を行う条件付きジャンプ命令と、
 無条件に指定アドレスへ遷移する \texttt{jmp} 命令のみである。
-そのため、コンパイラは構文解析の過程で、条件式の評価結果と動的に生成される「制御用ラベル」を組み合わせ、
-直線的なアセンブリ命令の列へとコンパイルしなければならない。
+そのため、コンパイラは構文解析の過程で、条件式の評価結果と生成される「制御用ラベル」を組み合わせ、
+アセンブリ命令の列へと変換する。
 本コンパイラでは、ラベルの重複を防ぎ一意性を保証するため、
-\texttt{label.c} で提供される \texttt{new\_label()} 関数を利用してラベル番号を動的に払い出している。
+\texttt{label.c} で提供される \texttt{new\_label()} 関数を利用してラベル番号を払い出している。
 
 \subsection*{2. if文のコンパイル仕様と制御フロー}
 構造文解析関数 \texttt{statement()} 内で予約語 \texttt{IF} を読んだとき、
@@ -230,7 +228,7 @@
 この開始ラベルの直後に条件式を評価させ、if文と同様に \texttt{emit\_compare\_and\_consume()} を用いて比較命令を出力した上で、
 条件が不成立（＝偽）となったときに繰り返しをでるための逆条件ジャンプ命令をだす。
 
-この条件評価の関門を突破した（条件成立）とみなされる位置に、ループの本体となる文（\texttt{statement()}）のコードを生成する。
+この条件が成立した（条件成立）とみなされる位置に、ループの本体となる文（\texttt{statement()}）のコードを生成する。
 ループ本体ブロックの解析コードの出力がすべておわった直後、
 コンパイラは条件評価の先頭位置へと制御をむりやり帰還させるための \texttt{jmp [start\_lbl]} 命令を出力する。
 最後に、ループ脱出用ジャンプの遷移先となる終了ラベル（\texttt{end\_lbl}）を全体の後処理として書き出すことで、
@@ -295,7 +293,7 @@
 解析の初期状態では、\texttt{op\_stack} に式の開始と終了を担保するための番兵 \texttt{OP\_END}(\texttt{\$}) を最初の一要素としてプッシュする。
 そして、無限ループ内で現在のトークンから入力側の優先度インデックスをとりだし、スタックトップの演算子との間で優先度を比較する。
 このとき、入力側のトークンが識別子（\texttt{IDENTIFIER}）または数値（\texttt{NUMBER}）である場合は、
-それらを即座にレジスタ \texttt{r0} へロードし、一時変数生成関数 \texttt{new\_temp()} によって動的に確保したメモリ番地（\texttt{\_\_tmp0}, \texttt{\_\_tmp1} $\dots$）へと \texttt{store} 命令を介して格納する。
+それらを即座にレジスタ \texttt{r0} へロードし、一時変数生成関数 \texttt{new\_temp()} によって確保したメモリ番地（\texttt{\_\_tmp0}, \texttt{\_\_tmp1} $\dots$）へと \texttt{store} 命令を介して格納する。
 この生成された一時変数の記号表インデックスを \texttt{val\_stack} へとプッシュし、字句を消費する。
 
 スタックトップの優先度 $f$ と入力演算子の優先度 $g$ の比較に基づく分岐制御の仕様は以下の通りである。
@@ -315,7 +313,7 @@
 \subsection*{3. 還元時におけるコード生成とスタックの連動}
 演算子の還元が実行されるとき、本コンパイラは被演算子スタック（\texttt{val\_stack}）に積まれているメモリ番地情報を引き出し、レジスタ操作命令へと落とし込む。
 ポップされた演算子が単項マイナス（\texttt{OP\_UNARY}）である場合、\texttt{val\_stack} から対象のメモリ番地を1つポップして \texttt{r0} にロードする。
-その後、定数ロード関数 \texttt{emit\_load\_const\_to\_reg()} を介してレジスタ \texttt{r1} に即値 \texttt{-1} を生成し、レジスタ間乗算命令 \texttt{mulr r0, r1} を出力することで安全に符号を反転させる。
+その後、定数ロード関数 \texttt{emit\_load\_const\_to\_reg()} を介してレジスタ \texttt{r1} に即値 \texttt{-1} を生成し、レジスタ間乗算命令 \texttt{mulr r0, r1} を出力することで符号を反転させる。
 
 一方、加減乗除（\texttt{+}, \texttt{-}, \texttt{*}, \texttt{div}）の二項演算子がポップされた場合は、\texttt{val\_stack} から右辺（\texttt{right}）と左辺（\texttt{left}）の割当メモリ番地を順次ポップする。
 そして、左辺の値を \texttt{r0} に、右辺の値を \texttt{r1} にそれぞれロードさせ、演算子種別に応じて \texttt{addr}, \texttt{subr}, \texttt{mulr}, \texttt{divr} 命令を出力する。
@@ -386,9 +384,9 @@
     加減算（\texttt{+}, \texttt{-}）の結合を管理する関数である。まず内部で下位階層の \texttt{term()} を呼び出して式の左辺項を評価させ、
     その結果をレジスタ \texttt{r0} にきめる。
     その後、続くトークンが \texttt{PLUS}(\texttt{+}) または \texttt{MINUS}(\texttt{-}) である間、ループを維持する。
-    ループ内では、左辺の結果を破壊しないように一時変数番地（\texttt{new\_temp()}）へ \texttt{store r0} 命令で退避させ、
+    ループ内では、左辺の結果を破壊しないように一時変数番地（\texttt{new\_temp()}）へ \texttt{store r0} 命令で保存し、
     字句を進めて右辺全体の評価のために再び \texttt{term()} を呼び出す。
-    右辺の評価が \texttt{r0} に完了したのち、退避させていた左辺を \texttt{r1} にロードし、
+    右辺の評価が \texttt{r0} に完了したのち、保存しておいた左辺を \texttt{r1} にロードし、
     レジスタ間演算命令（\texttt{addr r1, r0} または \texttt{subr r1, r0}）を出力する。
     この累積結果は再び一時変数へと保管され、最終的に \texttt{r0} に結果が戻る。
     
@@ -397,7 +395,7 @@
     まず最下位層の因子解析ルーチンである \texttt{factor()} を実行して左辺の因子を \texttt{r0} に評価する。
     続くトークンの属性が \texttt{TIMES}(\texttt{*}) または \texttt{DIV}(\texttt{div}) である限り、ループ処理を行う。
     アルゴリズムの挙動は \texttt{expression()} と同様であり、
-    現在の \texttt{r0} の計算結果を一時変数番地へ退避した上で \texttt{getsym()} を発行し、右辺因子を評価するために \texttt{factor()} を呼び出す。
+    現在の \texttt{r0} の計算結果を一時変数番地へ保存した上で \texttt{getsym()} を発行し、右辺因子を評価するために \texttt{factor()} を呼び出す。
     右辺因子のパースが完了すると、メモリから値を復元してレジスタ間乗除算命令（\texttt{mulr}, \texttt{divr}）を出力し、演算順位を保証する。
     
     \item \texttt{void factor(void); } (最下層：因子の解析) \\
@@ -405,8 +403,8 @@
     現在のトークンが変数（\texttt{IDENTIFIER}）であれば、\texttt{sym\_lookup()} で割当アドレスを取得して \texttt{load r0, [addr]} 命令を出力する。
     数値（\texttt{NUMBER}）であれば定数合成命令を出力して \texttt{r0} に値を置く。
     もし現在のトークンが開きカッコ \texttt{(} であった場合は、カッコ内の数式が最も高い優先度を持つため、
-    トークンを消費した上で、最上層の \texttt{expression()} を動的に再帰呼び出し（相互再帰）する。
-    これにより、カッコで囲まれた複雑な数式がどれほど深くネストしていても、独立した部分式として最上層から安全に再パースされ、
+    トークンを消費した上で、最上層の \texttt{expression()} を再帰呼び出しする。
+    これにより、カッコで囲まれた複雑な数式がどれほど深くネストしていても、独立した部分式として最上層から再パースされ、
     閉じカッコ \texttt{)} の整合性をチェックして factor 階層を抜ける仕組みとなっている。
 \end{itemize}
 
@@ -456,12 +454,12 @@
 % セクション5
 \section*{(5) 演算子順位構文解析とトップダウン構文解析の比較検討}
 
-\subsection*{1. 構文解析アプローチと構文解析木における走査方向の対比}
+\subsection*{1. 構文解析方法と構文解析木における走査方向の対比}
 トップダウン構文解析とボトムアップ構文解析は、言語の文法規則から構文木を構築するとき、理論上分立した方法となっている。
 トップダウン構文解析では、最上層の開始記号から文法規則を順に下位へと展開し、葉（終端記号）に向かって探索をおろしていく。
 文法の包含関係がそのまま関数のコールグラフと一致するため、人間の直感に近くプログラミング言語（C言語）の関数システムスタックをそのまま応用できる利点がある。
 
-これに対して、今回数式処理に採用したボトムアップ構文解析は、入力された終端記号の列（葉）を起点とし、
+これに対して、今回数式処理に使ったボトムアップ構文解析は、入力された終端記号の列（葉）を起点とし、
 優先度表に従って「シフト（スタックへの充填）」と「還元（上位の非終端記号への集約）」を繰り返しながら、木構造の根へと向かって上方向に構築していく。
 この2つの手法における、構文木構築時の走査ベクトルとデータ構造の対比を図7に示す。
 
@@ -503,43 +501,43 @@
     \node[anchor=north] at (6, -3.6) {\textbf{(b) 演算子順位構文解析の概念}};
 
 \end{tikzpicture}
-\caption{構文解析手法の違いによる走査方向と構文木構築プロセスの幾何学的対比図}
+\caption{構文解析手法の違いによる走査方向と構文木構築の概念図}
 \label{fig:parse_comparison}
 \end{center}
 \end{figure}
 
 \subsection*{2. レジスタ衝突（物理レジスタの破綻）とスタック退避特性の検討}
-仮想マシン \texttt{sr}のように、利用可能な物理レジスタの数に制限（\texttt{r0} $\sim$ \texttt{r3}）があるアーキテクチャに対してコード生成を行うとき、
+仮想マシン \texttt{sr}のように、利用できる物理レジスタの数に制限（\texttt{r0} $\sim$ \texttt{r3}）があるアーキテクチャに対してコード生成を行うとき、
 2つの手法ではレジスタ衝突の回避方法におおきな違いがある。
 
 トップダウン法で二項演算を深く入れ子にした式（例：右辺にさらに複雑なカッコ付きの式が続く場合）を愚直にパースしようとすると、
-下位の再帰呼び出しを処理するなかで、現在左辺の結果を保持しているレジスタの内容が重複して上書きされてしまう「レジスタ破綻」を引き起こす。
-これを解決するためには、ソースコードの要所（\texttt{term} や \texttt{expression} のループ内）に変数の値をメモリへ一次退避・復元する退避コードを泥臭く組み込まなければならず、
+下位の再帰呼び出しを処理するなかで、現在左辺の結果を保持しているレジスタの内容が重複して上書きされてしまうレジスタ破綻を引き起こす。
+これを解決するためには、ソースコードの要所（\texttt{term} や \texttt{expression} のループ内）に変数の値をメモリへ一時保存・復元するコードを組み込まなければならず、
 コードの保守性をそこなう。
 
 一方、ボトムアップ法では、被演算子トークンが出現した瞬間に、
-最初からすべて \texttt{new\_temp()} で動的に生成した一時メモリ空間へと値を退避させ、そのメモリ番地を \texttt{val\_stack} へと積み上げていく。
+最初からすべて \texttt{new\_temp()} で生成した一時メモリ空間へと値を保存して、そのメモリ番地を \texttt{val\_stack} へと積み上げていく。
 この設計により、いかにネストが深く複雑な数式であっても、レジスタ操作は還元の瞬間に「スタックから2つのメモリ番地を取り出し、
 \texttt{r0} と \texttt{r1} に一時的にロードして演算を終えたら直ちに新しい一時メモリへ書き戻す」という方法に統一できる。
 結果として、物理レジスタの消費を最低限の2個（\texttt{r0}, \texttt{r1}）でロックすることができ、
-コンパイラ側のレジスタアロケーションロジックを大きくすることなく、レジスタ衝突を起こさないコード生成をつくれるメリットがある。
+コンパイラ側のレジスタアロケーションの負担を大きくすることなく、レジスタ衝突を起こさないコード生成をつくれるメリットがある。
 
 \subsection*{3. コンパイル時および実行時におけるオーバーヘッドとトレードオフ}
 2つの手法のトレードオフ特性について、コンパイルの効率（時間・空間）および生成される目的コードの実行速度という二つの面から比較をする。
 
 トップダウン法は、ネストが深い式になるほどC言語の関数呼び出しの階層が深くなるため、コンパイル時におけるシステムスタックの消費量と、
 プロローグ・エピローグ処理に伴うコンパイル速度の劣化という「コンパイル時のオーバーヘッド」を伴う。
-しかし、出力されるアセンブリコードの観点から見ると、計算途中の値を不必要にメモリへ保存しないで、可能な限りレジスタ上で演算を継続するコードを引き出せるので、
+しかし、出力されるアセンブリコードの観点から見ると、計算途中の値を不必要にメモリへ保存しないで、できる限りレジスタ上で演算を継続するコードを引き出せるので、
 実行時における \texttt{load}/\texttt{store} 命令の総数が少なく、実行速度の速いコンパクトな目的プログラムを生成しやすい特性がある。
 
-これとは対称的に、今回ボトムアップ法で実装したアルゴリズムは、コンパイル処理自体は平坦な無限ループと2つの静的配列スタックのインデックス操作、
+一方で、ボトムアップ法では、コンパイル処理自体は平坦な無限ループと2つの静的配列スタックのインデックス操作、
 および定数時間（$\mathcal{O}(1)$）の優先度テーブル参照のみで駆動するため、コンパイル速度自体は早く動く。
 しかし、その代償として、計算の中間結果をすべて一時メモリを介する特性上、
 出力されるアセンブリコード内に \texttt{store r0, [\_\_tmp]} と \texttt{load r1, [\_\_tmp]} というメモリメモリアクセス命令がたくさんできる。
-これは、目的計算機シミュレータ上での実行時に「メモリバスアクセスの過多」をおこしてしまい、
-ステップ数の増大と実行速度の低下（実行時オーバーヘッドの累積）をおこす原因となる。
+これは、目的計算機シミュレータ上での実行時に単にメモリへのアクセス（\texttt{load}/\texttt{store}命令）が増えたため
+ステップ数の増大と実行速度の低下（実行時間が長くなる原因）をおこす原因となる。
 
-この比較検討から、限られた目的アーキテクチャで、レジスタの破綻を100\%確実に回避できる「ボトムアップ法によるコンパイル安全性の獲得」と、
+この比較検討から、限られた目的アーキテクチャで、レジスタの破綻を100\%確実に回避できる「ボトムアップ法によるコンパイル安定の獲得」と、
 生成される「目的プログラムの実行速度効率」の間には、トレードオフが存在することを確認することができた。
 
 \subsection*{4. 人間の解釈のしやすさとデバッグの観点からの考察}
@@ -555,7 +553,7 @@
 ボトムアップ法はスタックの状態を追う必要があり、特にエラーが発生したときに、どの段階でどの非終端記号が処理されているのかを特定するのが難しい。
 この点でも、トップダウン法は人間の解釈のしやすさとデバッグの観点から優れていると言える。
 
-私は理解しやすい構文解析手法として、トップダウン法を採用することが望ましいと考える。
+私は理解しやすい構文解析手法として、トップダウン法をつかうことが好みである。
 
 % セクション6
 \section*{(6) 手続きの実現の仕様}
@@ -567,7 +565,7 @@
 大域的な構文解析を操作する\texttt{outblock()} 関数内で、予約語 \texttt{PROCEDURE} を読み取ったとき、コンパイラは手続き宣言ブロックの解析へとうつる。
 まず字句解析から手続き名を取得し、これを \texttt{sym\_install()} によって記号表に登録した上で、
 制御用ラベル生成関数 \texttt{new\_label()} を用いてその手続き専用の開始ラベル（\texttt{lbl}）を割り当てる。
-この開始ラベル情報は、並列マッピング配列 \texttt{proc\_label} へと退避される。
+この開始ラベル情報は、並列マッピング配列 \texttt{proc\_label} へと保存される。
 続いて、仮引数のリストを解析する専用ルーチン \texttt{paramlist(PARAM\_DECL)} を呼び出し、手続きが要求する引数情報を記号表へとマッピングする。
 その後、手続き本体を処理するために \texttt{inblock()} を再帰的に呼び出すことで、手続きの包含関係をトップダウンにパースする仕組みをつくった。
 
@@ -580,7 +578,7 @@
 スタックポインタを引数分だけ引き上げる \texttt{addi sp, argc} 命令をエピローグとして出力する仕組みを制作した。
 
 \subsection*{2. 現状の実装における構造的課題と再帰呼び出しの制限}
-上述の通り、手続きの「宣言のパース」と「呼び出し時のジャンプ命令・引数のプッシュ」という基本的なシーケンスは正しく動いている。
+上述の通り、手続きの「宣言のパース」と「呼び出し時のジャンプ命令・引数のプッシュ」は正しく動いている。
 しかし、この仕様のままでは、手続きが自分自身を重ねて呼び出す「再帰呼び出し」を実行したとき、実行時の計算不整合が発生するという制限をもっている。
 
 その根本原因は、現在の変数参照がすべて記号表のインデックス番地に依存している点にある。
@@ -590,19 +588,19 @@
 
 \subsection*{3. 再帰呼び出しの完全成立に向けたスタックフレームの発展設計仕様}
 多重の再帰呼び出しに耐えうる手続き処理を完成させるためには、すべての仮引数および局所変数を固定番地ではなく、
-実行時スタック上に動的に確保されるスタックフレーム内の相対番地として管理しなければならない。
+実行時スタック上に確保されるスタックフレーム内の相対番地として管理しなければならない。
 
 今後の具体的な発展した設計仕様として、目的計算機が持つベースレジスタ（\texttt{BR}）をフル活用する仕組みを考える。
-手続きが呼び出された直後の前処理で、現在の \texttt{BR} の値をスタックに退避させ、動的リンクの保存、
+手続きが呼び出された直後の前処理で、現在の \texttt{BR} の値をスタックに保存し、動的リンクの保存、
 現在のスタックポインタの値を新たな \texttt{BR} にコピーして、その関数世代の基準点をつくりあげる。
 これにより、手続き内の引数や局所変数は、すべて基準点からのオフセット、
 つまり \texttt{load r0, -4(BR)} や \texttt{storer r0, 1(BR)} のようなベースレジスタ相対ロード・ストア命令（\texttt{loadr}, \texttt{storer}）を介してアクセスされる仕様へとかえる。
 このとき、記号表側も前述の二重構造へと拡張し、インデックス番号の代わりに「\texttt{BR} からの相対オフセット値」を属性として保持する仕様へと作り変える。
 
 手続きの終了時には、スタックから元の \texttt{BR} の値をポップして書き戻し、親世代の基準点を復元した上でサブルーチン復帰命令（\texttt{ret}）を実行する。
-この動的なスタックフレーム制御の導入により、同一の手続きが何世代にわたって再帰呼び出しされようとも、
-各世代の変数はメモリスタック上の異なるフレーム領域にわけられ、値の破壊が起きにくい手続きシステムが完成する。
-再帰呼び出し時に実行時スタック上に展開されるべき、このスタックフレームの論理的動態概念図を図8に示す。
+このスタックフレーム制御の導入により、同一の手続きが何世代にわたって再帰呼び出しされようとも、
+各世代の変数はメモリスタック上の異なるフレーム領域にわけられ、値の破壊が起きにくい手続き処理（再帰呼び出し）が正しく実現できる。
+再帰呼び出し時に実行時スタック上に展開されるべき、このスタックフレームの構造図を図8に示す。
 
 \begin{figure}[!ht]
 \begin{center}
@@ -639,7 +637,7 @@
     % 外枠
     \draw[thick, gray] (-2.2, 0.5) rectangle (5.5, -3.7);
 \end{tikzpicture}
-\caption{再帰呼び出しの実現時に動的に生成されるスタックフレームとレジスタ相対配置概念図}
+\caption{再帰呼び出し時におけるスタックフレームの構造図}
 \label{fig:stack_frame_dynamics}
 \end{center}
 \end{figure}
@@ -649,12 +647,12 @@
 
 \subsection*{1. コンパイラにおけるエラー処理の基本方針と設計思想}
 コンパイラ開発で、不完全または文法的に破綻した原始プログラムを読み取ったときの振る舞いは、システムの堅牢性を左右する重要な設計の要素であると考える。
-本コンパイラでは、不適切なソースコードを読み取ったとき、誤ったアセンブリコードを出力したまま処理を継続することを防ぐため、\textbf{「パニックモード一律停止型」のエラー処理アルゴリズム}を使っている。
+本コンパイラでは、不適切なソースコードを読み取ったとき、誤ったアセンブリコードを出力したまま処理を継続することを防ぐため、\textbf{エラーを検出した時点で即座に処理を終了する方式のエラー処理アルゴリズム}を使っている。
 
 エラー処理の基盤として、ソースファイル内で \texttt{error(char *s)} 関数を定義している。
 構文解析のいずれのフェーズであっても、矛盾や文法規則違反をみつけたときこの関数が呼び出される。
 関数内部では、引き渡されたエラー原因を示すメッセージ文字列を \texttt{fprintf(stderr, ...)} 命令を介して標準エラー出力へ書き出す。
-その後、目的プログラムであるアセンブリファイル（\texttt{outfile}）の出力を遮断し、C言語の標準ライブラリ関数である \texttt{exit(1)} を実行してコンパイルプロセスそのものを異常終了（強制パニックアウト）させるようにしている。
+その後、目的プログラムであるアセンブリファイル（\texttt{outfile}）の出力を遮断し、C言語の標準ライブラリ関数である \texttt{exit(1)} を実行してコンパイルプロセスそのものを終了させるようにしている。
 これにより、異常な原始プログラムから不正なアセンブリコードが生成されてしまう不整合をふせいでいる。
 
 \subsection*{2. 各コンパイルフェーズにおける具体的なエラー検知メカニズム}
@@ -675,12 +673,12 @@
     \item \textbf{目的計算機アーキテクチャの制約に起因する即値限界エラー：} \\
     定数ロード関数 \texttt{emit\_load\_const\_to\_reg()} 内部で、ハードウェアの即値上限に起因して作動する特殊な意味エラーである。
     目的計算機の \texttt{loadi} 命令が持つオペランドは 16bit 領域（$-32768 \sim 32767$）に制限されている。
-    本コンパイラでは、この制限を超える巨大な定数が現れたとき、自動的に2つの整数の積へと因数分解して命令を合成する拡張ロジックを実装しているが、万が一分解不可能な巨大な素数などが現れて合成に失敗したとき、そのままでは異常な機械語が生成されてしまう。
+    本コンパイラでは、この制限を超える巨大な定数が現れたとき、自動的に2つの整数の積へと因数分解して命令をつくりあげる方法を実装しているが、もし分解できない巨大な素数などが現れて合成に失敗したとき、そのままでは異常な機械語が生成されてしまう。
     これを防ぐため、因数分解ループを抜けた最終エピローグ領域に「\texttt{定数が大きすぎて処理できません。}」というトラップを配置し、アーキテクチャの破綻をコンパイル時にみつけて停止させる仕様としている。
 \end{itemize}
 
 \subsection*{3. エラー検知から処理強制終了にいたる制御シークエンス図}
-原始プログラムに文法エラーが混入していたとき、コンパイラ内部で発生する関数呼び出しの遮断と、標準エラー出力へのパニックアウトの流れ図を図9に示す。
+原始プログラムに文法エラーが混入していたとき、コンパイラ内部で発生する関数呼び出しの遮断と、エラー出力への流れ図を図9に示す。
 
 \begin{figure}[!ht]
 \begin{center}
@@ -718,7 +716,7 @@
     \node[right, black, font=\scriptsize, text width=9em] at ($(check.south)!0.4!(normal.north)+(0.9cm,0)$) {目的コード出力（\texttt{outfile}）の即時遮断};
 
 \end{tikzpicture}
-\caption{エラー検知時におけるコンパイル処理の安全な遮断とパニックアウトのシーケンス}
+\caption{エラー検知時におけるコンパイル処理の遮断と終了}
 \label{fig:error_handling_flow}
 \end{center}
 \end{figure}
@@ -773,11 +771,11 @@ E025 & emit\_load\_const\_to\_reg() & 即値の上限を超えた定数を処理
 
 \subsection*{1. コンパイラシステム全体のデータ処理・構成概念図}
 本演習で構築したコンパイラシステムは、高水準言語で記述された原始プログラムを入力とし、複数の独立した処理ツール（コンパイラコア、アセンブラ、仮想計算機シミュレータ）のパイプライン処理を経て最終的な実行結果を出力する。
-システム全体におけるデータの変流と各ツールの連携構造、および記号表を介した字句解析・構文解析の相互作用の概念を図9に示す。
+システム全体におけるデータフローと各ツールの連携構造、および記号表を介した字句解析・構文解析の相互作用の概念を図9に示す。
 
 原始プログラム \texttt{pi.p} が自作コンパイラに投入されると、内部の構文解析モジュール \texttt{parse.c} が主導権を握る。
 \texttt{parse.c} は、提供された字句解析ライブラリの関数 \texttt{getsym()} をオンデマンドで呼び出し、原始プログラムの文字列から「トークン」を1つずつ切り出させる。
-現れた識別子が変数宣言や数式評価、代入文である場合は、記号表モジュール \texttt{symtab.c} へアクセスしてインデックス番地の登録（\texttt{sym\_install}）や定義の逆引き（\texttt{sym\_lookup}）を実行し、データのメモリマッピングを解決する。
+現れた識別子が変数宣言や数式評価、代入文である場合は、記号表モジュール \texttt{symtab.c} へアクセスしてインデックス番地の登録（\texttt{sym\_install}）や定義の探索（\texttt{sym\_lookup}）を実行し、データのメモリマッピングを解決する。
 
 構文解析と同時に、コンパイラコアは目的命令であるアセンブリ言語コードを \texttt{fprintf(outfile, ...)} を介して直線的にファイル \texttt{a.asm} へと書き出す。
 生成された \texttt{a.asm} は、目的計算機用アセンブラ \texttt{asm} によってバイナリ形式のオブジェクトコード \texttt{a.out} へと一括アセンブルされる。
@@ -810,13 +808,13 @@ E025 & emit\_load\_const\_to\_reg() & 即値の上限を超えた定数を処理
     \path [arrowline] (bin) -- (sr);
     \path [arrowline] (sr) -- (res);
 \end{tikzpicture}
-\caption{原始プログラムの解析から目的計算機での実行にいたるシステム全体の階層構成概念図}
+\caption{コンパイラシステム全体のデータフローと実行の流れ}
 \label{fig:system_architecture}
 \end{center}
 \end{figure}
 
 \subsection*{2. 実現した各解析関数の依存関係図（コールツリー）}
-コンパイラ内部における各解析関数の呼び出し関係および、トップダウン制御とボトムアップ数式解析が融合したハイブリッドな依存関係を図10に示す。
+コンパイラ内部における各解析関数の呼び出し関係および、トップダウン制御とボトムアップ数式解析の依存関係を図10に示す。
 
 プログラム全体の解析エントリポイントは \texttt{compiler()} である。
 \texttt{compiler()} は起動直後に \texttt{init\_getsym()} を介して字句解析を初期化し、プログラム頭部の宣言を確認したのち、変数宣言ブロックを解析する \texttt{outblock()} を呼び出す。
@@ -826,8 +824,7 @@ E025 & emit\_load\_const\_to\_reg() & 即値の上限を超えた定数を処理
 \texttt{statement()} はプログラムの入れ子構造をパースするため、予約語 \texttt{BEGIN} を読み取ったときには自分自身を再帰的に何度も呼び出す。
 また、代入文（\texttt{IDENTIFIER :=}）や制御構文（\texttt{IF}, \texttt{WHILE}）の分岐条件式を見つけたときには、式評価の統合ラッパーである \texttt{eval\_to\_r0()} を呼び出す。
 
-本コンパイラ仕様の最大の特徴は、この \texttt{eval\_to\_r0()} の下位の依存関係にある。
-トップダウン用の3関数 \texttt{expression()}, \texttt{term()}, \texttt{factor()} への依存関係は安全のためにコメントアウトされており、
+トップダウン用の3関数 \texttt{expression()}, \texttt{term()}, \texttt{factor()} への依存関係はコメントアウトされており、
 代わりに2つの明示的スタックをループ制御するボトムアップ式解析関数 \texttt{parse\_expression\_bottomup()} へと制御が一方向へ委ねられる。
 \texttt{parse\_expression\_bottomup()} の内部では、数式の還元に伴ってアセンブリコード生成系や一時変数割当（\texttt{new\_temp()}）が呼び出され、
 最終的な評価値をレジスタ \texttt{r0} に確定させて \texttt{statement()} の制御へと戻ってくる。
@@ -873,7 +870,7 @@ E025 & emit\_load\_const\_to\_reg() & 即値の上限を超えた定数を処理
     \path[draw, ->, gray, dashed] (term) -- (fact);
 
 \end{tikzpicture}
-\caption{コンパイラ内部の関数コールツリーとボトムアップ差し替えにともなうハイブリッド依存関係図}
+\caption{コンパイラ内部の関数コールツリーとボトムアップ差し替えにともなう依存関係図}
 \label{fig:function_dependency}
 \end{center}
 \end{figure}
@@ -1199,33 +1196,31 @@ HALT at 221.
 一般に、構文解析自体の処理効率においては、関数の再帰呼び出しオーバーヘッドがないボトムアップ法（演算子順位法）のほうが高速であるとされる。
 しかし、仮想マシン \texttt{sr} 上でのプログラム実行時間（\texttt{exec time}）を比較すると、この解析手法の差が直接的に実行速度の優劣には繋がらない。
 
-本実験のボトムアップ実装では、数式の還元時にレジスタの枯渇を回避するため、内部で一時変数（\texttt{\_\_tmp0}等）を動的に生成し、メモリを介して値を退避・復元するコードを生成する方法を使った。
+本実験のボトムアップ実装では、数式の還元時にレジスタの不足を回避するため、内部で一時変数（\texttt{\_\_tmp0}等）を生成し、メモリを介して値を保存・復元するコードを生成する方法を使った。
 仮想マシン上におけるデータメモリへのアクセス（\texttt{load}/\texttt{store}）はレジスタ間演算に比べて命令の実行コストが高いため、
 生成された目的プログラムの実行速度は、メモリ経由の少ないトップダウン法で生成されたコードと同等、あるいは一時変数へのアクセス回数の分だけ微増する傾向にある。
 したがって、解析アルゴリズムとしての理論上の速度と、最終的に生成されるアセンブリコードの実行時効率は区別して検討する必要がある。
-
-ここは生成AIの力を借りました。
 
 \section*{(11) その他、工夫した点について}
 \subsection*{大きな定数（即値）への対応自動化 (\texttt{emit\_load\_const\_to\_reg})}
 目的計算機仕様で、即値ロード命令（\texttt{loadi} 等）のオペランドが 16bit（$-32768 \sim 32767$）に制限されている制約に対して工夫を行った。
 ソースコード中に制限を超える大きな定数が現れたとき、コンパイラが自動的にその数値を因数分解（16bit以内に収まる2つの整数の積に分解）し、
-レジスタ上で \texttt{loadi} 命令と \texttt{muli} 命令を動的に組み合わせて目的の定数値を合成する関数 \texttt{emit\_load\_const\_to\_reg} を独自に作成した。
-これにより、人間が手動で定数を分割定義することなく、巨大な定数を含む複雑な数式であっても安全にコンパイルを通すことができるようになった。
+レジスタ上で \texttt{loadi} 命令と \texttt{muli} 命令を組み合わせて目的の定数値をつくる関数 \texttt{emit\_load\_const\_to\_reg} を作成した。
+これにより、人間が手動で定数を分割定義することなく、巨大な定数を含む複雑な数式であってもコンパイルを通すことができるようになった。
 
-\subsection*{静的変数を用いた再帰深度の動的追跡と halt 命令の一意出力制御}
+\subsection*{静的変数を用いた再帰深度の追跡と halt 命令の一意出力制御}
 本コンパイラの文解析ルーチン \texttt{statement()} の実装で、
-プログラムの正常終了を司る \texttt{halt} 命令を「いかにしてアセンブリコードの真の最外層の終端にのみ1回だけ一意に出力させるか」という、
-コード生成制御上の課題に対して独自の工夫を行った。
+プログラムの正常終了を制御する \texttt{halt} 命令を「いかにしてアセンブリコードの終端にのみ1回だけ出力させるか」という、
+コード生成制御上の課題に工夫を行った。
 
 高水準言語における \texttt{BEGIN ~ END} ブロックや \texttt{IF}, \texttt{WHILE} などの制御構文は、
 内部に別の文を内包するため、\texttt{statement()} 関数が自分自身を何度も呼び出す「自己再帰構造」を形成する。
 もし単純に関数のエピローグ領域へ \texttt{halt} 命令の出力を記述してしまうと、
 入れ子構造の内側にある部分的な文の解析が完了して再帰スタックから復帰するたびに、
-アセンブリコードの途中に \texttt{halt} が不当に乱発され、シミュレータ上でプログラムが途中で強制終了してしまう問題が発生した。
+アセンブリコードの途中に \texttt{halt} が出力され、シミュレータ上でプログラムが途中で強制終了してしまう問題が発生した。
 
-この課題をスマートに解決するため、C言語の \texttt{static} 変数の特質を応用した「再帰深度カウンタ」のロジックを関数内に独創的に組み込んだ。
-具体的には以下の制御シーケンスを実装している。
+この課題を解決するため、「再帰深度カウンタ」を関数内に作った。
+具体的には以下の制御を実装している。
 \begin{lstlisting}[language=C, basicstyle=\small\ttfamily]
 static int depth = 0;
 int is_outer = (depth == 0); /* 最外層エントリポイントの判定 */
@@ -1244,584 +1239,15 @@ if (is_outer) {
 その後、どれほど深く \texttt{BEGIN} のネストが繰り返されてスタックフレームが積み上がろうとも、
 内側の呼び出し世代では \texttt{depth > 0} となるため、フラグは一律で「偽（0）」に固定され、不要な \texttt{halt} の出力を抑制する。
 
-そして、すべての構文解析が完了して再帰のネストが巻き戻り、まさに「プログラム全体の解析を終えて脱出する最後の瞬間」にのみ、
-保持されていた \texttt{is\_outer} の条件が成立し、アセンブリの最末尾にのみ美しい \texttt{halt} 命令を1発だけ書き出す制御に成功した。
-コンパイラ全体のコード生成構造を肥大化させることなく、関数ローカルなスコープ内で再帰のライフサイクルを動的に追跡して目的コードの整合性を担保した。
+そして、すべての構文解析が完了して再帰のネストが巻き戻り、プログラム全体の解析を終えて脱出する最後の瞬間にだけ、
+保持されていた \texttt{is\_outer} の条件が成立し、アセンブリの最末尾にのみ美しい \texttt{halt} 命令を1発だけ書き出す制御をできるようにした。
+コンパイラ全体のコード生成構造を肥大化させることなく、関数ローカルなスコープ内で再帰のライフサイクルを追跡して目的コードの正しさを保った。
 おそらくもっと良いやり方があると思うが、この方法はシンプルで理解しやすく、かつ確実に正しいコード生成を保証するため、個人的には非常に満足している。
 
 \section*{(12) コンパイラのソースプログラムの全リストにコメントをつけたもの}
 提出要領に従い、ソースコード一式は \texttt{work} ディレクトリを圧縮したファイル（\texttt{work.zip}）として別途提出するため、
 本レポートPDF内へのソースコードリストの添付は省略する。
 
-それぞれ実装をブランチを分けて管理していたため、二つのワークディレクトリを圧縮したzipファイルとして提出する。
-
-% \begin{figure}[!ht]
-%     \centering
-%     \includegraphics[width=0.8\linewidth]{image.png} % 拡張子.pngを直接指定可能
-%     \caption{作成したコンパイラの実行画面（またはアセンブリの出力）}
-%     \label{fig:execution}
-% \end{figure}
-
-
-% \begin{figure}[htbp]
-%     \centering
-%     \tikzset{
-%         % 非終端記号（四角・白背景・少し太めの枠）
-%         nonterm/.style={rectangle, draw=blue!60!black, thick, minimum height=7mm, minimum width=18mm, fill=blue!5, font=\sffamily\small},
-%         % 終端記号（角丸・グレー背景・等幅フォント）
-%         term/.style={rectangle, draw=gray!80, thick, rounded corners=3mm, minimum height=7mm, minimum width=12mm, fill=gray!10, font=\ttfamily\small},
-%         % 分岐ポイント用
-%         point/.style={coordinate},
-%         >=stealth,
-%         every path/.style={thick, draw=gray!80!black}
-%     }
-
-%     % ==========================================
-%     % 4. statement の構文図（新規リッチ化）
-%     % ==========================================
-%     \begin{tikzpicture}[scale=0.95, transform shape]
-%         \node[anchor=east] at (-0.5, 0) {\textbf{statement}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (split) at (0.8,0) {};
-        
-%         % --- ルート1: 代入文 (ident := expr) ---
-%         \node[term] (id1) at (2.5, 2.5) {identifier};
-%         \node[term] (assign) at (5, 2.5) {:=};
-%         \node[nonterm] (expr1) at (7.5, 2.5) {expression};
-        
-%         % --- ルート2: call 文 (call ident ( ... )) ---
-%         \node[term] (call) at (2.2, 1) {call};
-%         \node[term] (id2) at (4.2, 1) {identifier};
-%         \node[point] (p_call1) at (5.5, 1) {};
-%         \node[term] (lpar1) at (6.5, 1) {(};
-%         \node[nonterm] (expr2) at (8.5, 1) {expression};
-%         \node[point] (p_call2) at (10, 1) {};
-%         \node[term] (comma) at (8.5, 0.2) {,};
-%         \node[term] (rpar1) at (11, 1) {};
-%         \node[term] (rpar1_real) at (11, 1) {)};
-%         \node[point] (p_call3) at (12.2, 1) {};
-
-%         % --- ルート3: begin end 文 ---
-%         \node[term] (begin) at (2.2, -1) {begin};
-%         \node[nonterm] (stat1) at (4.5, -1) {statement};
-%         \node[point] (p_beg1) at (6, -1) {};
-%         \node[term] (semi) at (6, -1.8) {;};
-%         \node[term] (end) at (7.5, -1) {end};
-
-%         % --- ルート4: if 文 ---
-%         \node[term] (if) at (2.2, -2.8) {if};
-%         \node[nonterm] (cond1) at (4.2, -2.8) {condition};
-%         \node[term] (then) at (6.4, -2.8) {then};
-%         \node[nonterm] (stat2) at (8.6, -2.8) {statement};
-
-%         % --- ルート5: while 文 ---
-%         \node[term] (while) at (2.2, -4) {while};
-%         \node[nonterm] (cond2) at (4.4, -4) {condition};
-%         \node[term] (do) at (6.6, -4) {do};
-%         \node[nonterm] (stat3) at (8.8, -4) {statement};
-
-%         % 合流ポイント
-%         \node[point] (join) at (13.5, 0) {};
-%         \node[point] (out) at (14.2, 0) {};
-
-%         % 描画配線
-%         \draw[->] (in) -- (split);
-        
-%         % 代入
-%         \draw[->] (split) |- (id1); \draw[->] (id1) -- (assign); \draw[->] (assign) -- (expr1); \draw[->] (expr1) -| (join);
-        
-%         % call
-%         \draw[->] (split) |- (call); \draw[->] (call) -- (id2); \draw[->] (id2) -- (p_call1) -- (lpar1);
-%         \draw[->] (id2) -- (p_call1) |- (p_call3); % 引数なしバイパス
-%         \draw[->] (lpar1) -- (expr2); \draw[->] (expr2) -- (rpar1_real); \draw[->] (rpar1_real) -- (p_call3);
-%         \draw[->] (p_call2) |- (comma); \draw[->] (comma) -| (p_call1); % カンマループ
-%         \draw[->] (p_call3) -| (join);
-        
-%         % begin
-%         \draw[->] (split) |- (begin); \draw[->] (begin) -- (stat1); \draw[->] (stat1) -- (end);
-%         \draw[->] (p_beg1) -- (semi); \draw[->] (semi) -| (2.8, -1) -- (stat1); % セミコロンループ
-%         \draw[->] (end) -| (join);
-        
-%         % if
-%         \draw[->] (split) |- (if); \draw[->] (if) -- (cond1); \draw[->] (cond1) -- (then); \draw[->] (then) -- (stat2); \draw[->] (stat2) -| (join);
-        
-%         % while
-%         \draw[->] (split) |- (while); \draw[->] (while) -- (cond2); \draw[->] (cond2) -- (do); \draw[->] (do) -- (stat3); \draw[->] (stat3) -| (join);
-
-%         \draw[->] (join) -- (out);
-%     \end{tikzpicture}
-
-%     \vspace{0.8cm}
-
-%     % ==========================================
-%     % 1. expression の構文図
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{expression}};
-%         \node[point] (in) at (0,0) {};
-%         \node[nonterm] (t1) at (2,0) {term};
-%         \node[point] (p1) at (3.5,0) {};
-%         \node[point] (p2) at (8.5,0) {};
-%         \node[point] (out) at (9.5,0) {};
-
-%         \node[term] (plus) at (5, -0.8) {+};
-%         \node[term] (minus) at (5, -1.8) {-};
-%         \node[nonterm] (t2) at (7, -1.3) {term};
-
-%         \draw[->] (in) -- (t1); \draw[->] (t1) -- (p2); \draw[->] (p2) -- (out);
-%         \draw[->] (p1) |- (plus); \draw[->] (p1) |- (minus);
-%         \draw[->] (plus) -| (6, -1.3) -- (t2); \draw[->] (minus) -| (6, -1.3) -- (t2);
-%         \draw[->] (t2) -| (p2);
-%     \end{tikzpicture}
-
-%     \vspace{0.8cm}
-
-%     % ==========================================
-%     % 2. term の構文図
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{term}};
-%         \node[point] (in) at (0,0) {};
-%         \node[nonterm] (f1) at (2,0) {factor};
-%         \node[point] (p1) at (3.5,0) {};
-%         \node[point] (p2) at (8.5,0) {};
-%         \node[point] (out) at (9.5,0) {};
-
-%         \node[term] (times) at (5, -0.8) {*};
-%         \node[term] (div) at (5, -1.8) {div};
-%         \node[nonterm] (f2) at (7, -1.3) {factor};
-
-%         \draw[->] (in) -- (f1); \draw[->] (f1) -- (p2); \draw[->] (p2) -- (out);
-%         \draw[->] (p1) |- (times); \draw[->] (p1) |- (div);
-%         \draw[->] (times) -| (6, -1.3) -- (f2); \draw[->] (div) -| (6, -1.3) -- (f2);
-%         \draw[->] (f2) -| (p2);
-%     \end{tikzpicture}
-
-%     \vspace{0.8cm}
-
-%     % ==========================================
-%     % 3. factor の構文図
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{factor}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (split) at (1,0) {};
-%         \node[point] (join) at (8,0) {};
-%         \node[point] (out) at (9,0) {};
-
-%         \node[term] (id) at (4, 0) {identifier};
-%         \node[term] (num) at (4, -0.9) {number};
-%         \node[term] (lparen) at (2.5, -1.8) {(};
-%         \node[nonterm] (expr) at (4.5, -1.8) {expression};
-%         \node[term] (rparen) at (6.5, -1.8) {)};
-
-%         \draw[->] (in) -- (split); \draw[->] (split) -- (id); \draw[->] (id) -- (join); \draw[->] (join) -- (out);
-%         \draw[->] (split) |- (num); \draw[->] (num) -| (join);
-%         \draw[->] (split) |- (lparen); \draw[->] (lparen) -- (expr); \draw[->] (expr) -- (rparen); \draw[->] (rparen) -| (join);
-%     \end{tikzpicture}
-    
-%     \caption{拡張言語仕様の構文図（statement, expression, term, factor）}
-%     \label{fig:syntax_diagrams_all}
-% \end{figure}
-
-% \begin{figure}[htbp]
-%     \centering
-%     \tikzset{
-%         % 非終端記号（青）
-%         nonterm/.style={rectangle, draw=blue!60!black, thick, minimum height=7mm, minimum width=18mm, fill=blue!5, font=\sffamily\small},
-%         % 終端記号（グレー・角丸）
-%         term/.style={rectangle, draw=gray!80, thick, rounded corners=3mm, minimum height=7mm, minimum width=12mm, fill=gray!10, font=\ttfamily\small},
-%         point/.style={coordinate},
-%         >=stealth,
-%         every path/.style={thick, draw=gray!80!black}
-%     }
-
-%     % ==========================================
-%     % 1. statement の構文図 (parse.c 完全準拠)
-%     % ==========================================
-%     \begin{tikzpicture}[scale=0.9, transform shape]
-%         \node[anchor=east] at (-0.5, 0) {\textbf{statement}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (split) at (0.6,0) {};
-        
-%         % --- ルート1: begin - end 文 ---
-%         \node[term] (begin) at (2.2, 3.5) {begin};
-%         \node[nonterm] (stat1) at (4.5, 3.5) {statement};
-%         \node[point] (p_beg1) at (6, 3.5) {};
-%         \node[term] (semi) at (6, 2.7) {;};
-%         \node[term] (end) at (7.5, 3.5) {end};
-
-%         % --- ルート2: write 文 ---
-%         \node[term] (write) at (2.2, 1.5) {write};
-%         \node[point] (p_wr1) at (3.8, 1.5) {};
-%         \node[term] (wr_id) at (5.2, 1.8) {identifier};
-%         \node[term] (wr_num) at (5.2, 1.0) {number};
-%         \node[point] (p_wr2) at (6.6, 1.5) {};
-%         \node[point] (p_wr3) at (7.4, 1.5) {};
-%         \node[term] (wr_comma) at (5.6, 0.3) {,};
-
-%         % --- ルート3: identifier から始まる文 (代入 or 呼び出し) ---
-%         \node[term] (id) at (2.2, -1) {identifier};
-%         \node[point] (p_id) at (4, -1) {};
-%         % 代入
-%         \node[term] (assign) at (5.5, -0.5) {:=};
-%         \node[nonterm] (expr1) at (7.5, -0.5) {expression};
-%         % 呼び出し (LPARENから始まる)
-%         \node[term] (lpar1) at (5.5, -1.5) {(};
-%         \node[point] (p_cal1) at (6.6, -1.5) {};
-%         \node[nonterm] (expr2) at (7.8, -1.5) {expression};
-%         \node[point] (p_cal2) at (9, -1.5) {};
-%         \node[term] (cal_comma) at (7.8, -2.2) {,};
-%         \node[term] (rpar1) at (10, -1.5) {)};
-
-%         % --- ルート4: if 文 (else 対応) ---
-%         \node[term] (if) at (2.2, -3.5) {if};
-%         \node[nonterm] (expr_if) at (4.2, -3.5) {expression};
-%         \node[term] (op_if) at (6.6, -3.5) {rel\_op}; % 比較演算子群
-%         \node[term] (then) at (8.6, -3.5) {then};
-%         \node[nonterm] (stat2) at (10.6, -3.5) {statement};
-%         \node[point] (p_if) at (12, -3.5) {};
-%         \node[term] (else) at (10.6, -4.3) {else};
-%         \node[nonterm] (stat3) at (12.4, -4.3) {statement};
-
-%         % --- ルート5: while 文 ---
-%         \node[term] (while) at (2.2, -5.5) {while};
-%         \node[nonterm] (expr_wh) at (4.2, -5.5) {expression};
-%         \node[term] (op_wh) at (6.6, -5.5) {rel\_op};
-%         \node[term] (do) at (8.6, -5.5) {do};
-%         \node[nonterm] (stat4) at (10.6, -5.5) {statement};
-
-%         % 合流・出力
-%         \node[point] (join) at (14.2, 0) {};
-%         \node[point] (out) at (14.8, 0) {};
-
-%         \draw[->] (in) -- (split);
-        
-%         % begin 配線
-%         \draw[->] (split) |- (begin); \draw[->] (begin) -- (stat1); \draw[->] (stat1) -- (end);
-%         \draw[->] (p_beg1) -- (semi); \draw[->] (semi) -| (3.4, 3.5) -- (stat1);
-%         \draw[->] (end) -| (join);
-        
-%         % write 配線
-%         \draw[->] (split) |- (write); \draw[->] (write) -- (p_wr1);
-%         \draw[->] (p_wr1) |- (wr_id); \draw[->] (p_wr1) |- (wr_num);
-%         \draw[->] (wr_id) -| (p_wr2); \draw[->] (wr_num) -| (p_wr2);
-%         \draw[->] (p_wr2) -- (p_wr3);
-%         \draw[->] (p_wr2) |- (wr_comma); \draw[->] (wr_comma) -| (p_wr1);
-%         \draw[->] (p_wr3) -| (join);
-        
-%         % identifier (代入 / call) 配線
-%         \draw[->] (split) |- (id); \draw[->] (id) -- (p_id);
-%         % 代入
-%         \draw[->] (p_id) |- (assign); \draw[->] (assign) -- (expr1); \draw[->] (expr1) -| (join);
-%         % call
-%         \draw[->] (p_id) |- (lpar1); \draw[->] (lpar1) -- (p_cal1) -- (expr2);
-%         \draw[->] (lpar1) -- (p_cal1) |- (p_cal2); % 空引数バイパス
-%         \draw[->] (expr2) -- (p_cal2) -- (rpar1);
-%         \draw[->] (p_cal2) |- (cal_comma); \draw[->] (cal_comma) -| (p_cal1);
-%         \draw[->] (rpar1) -| (join);
-        
-%         % if 配線
-%         \draw[->] (split) |- (if); \draw[->] (if) -- (expr_if); \draw[->] (expr_if) -- (op_if);  \draw[->] (op_if) -- (then); \draw[->] (then) -- (stat2);
-%         \draw[->] (stat2) -- (p_if);
-%         \draw[->] (p_if) |- (else); \draw[->] (else) -- (stat3); \draw[->] (stat3) -| (13.5, -3.5) -- (join); % elseルート
-%         \draw[->] (p_if) -| (13.5, -3.5) -- (join); % 直進ルート
-        
-%         % while 配線
-%         \draw[->] (split) |- (while); \draw[->] (while) -- (expr_wh); \draw[->] (expr_wh) -- (op_wh); \draw[->] (op_wh) -- (do); \draw[->] (do) -- (stat4);
-%         \draw[->] (stat4) -| (join);
-
-%         \draw[->] (join) -- (out);
-%     \end{tikzpicture}
-
-%     \vspace{0.6cm}
-
-%     % ==========================================
-%     % 2. expression の構文図 (ループ構造化)
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{expression}};
-%         \node[point] (in) at (0,0) {};
-%         \node[nonterm] (t1) at (2,0) {term};
-%         \node[point] (loop_start) at (3.5,0) {};
-%         \node[point] (loop_end) at (7.5,0) {};
-%         \node[point] (out) at (8.5,0) {};
-
-%         \node[term] (plus) at (5, -0.7) {+};
-%         \node[term] (minus) at (5, -1.5) {-};
-
-%         \draw[->] (in) -- (t1);
-%         \draw[->] (t1) -- (out);
-%         % ループ配線
-%         \draw[->] (loop_end) |- (minus);
-%         \draw[->] (loop_end) |- (plus);
-%         \draw[->] (plus) -| (loop_start);
-%         \draw[->] (minus) -| (loop_start);
-%     \end{tikzpicture}
-
-%     \vspace{0.6cm}
-
-%     % ==========================================
-%     % 3. term の構文図 (ループ構造化)
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{term}};
-%         \node[point] (in) at (0,0) {};
-%         \node[nonterm] (f1) at (2,0) {factor};
-%         \node[point] (loop_start) at (3.5,0) {};
-%         \node[point] (loop_end) at (7.5,0) {};
-%         \node[point] (out) at (8.5,0) {};
-
-%         \node[term] (times) at (5, -0.7) {*};
-%         \node[term] (div) at (5, -1.5) {div};
-
-%         \draw[->] (in) -- (f1);
-%         \draw[->] (f1) -- (out);
-%         % ループ配線
-%         \draw[->] (loop_end) |- (div);
-%         \draw[->] (loop_end) |- (times);
-%         \draw[->] (times) -| (loop_start);
-%         \draw[->] (div) -| (loop_start);
-%     \end{tikzpicture}
-
-%     \vspace{0.6cm}
-
-%     % ==========================================
-%     % 4. factor の構文図
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{factor}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (split) at (1,0) {};
-%         \node[point] (join) at (8,0) {};
-%         \node[point] (out) at (9,0) {};
-
-%         \node[term] (id) at (4, 0) {identifier};
-%         \node[term] (num) at (4, -0.9) {number};
-%         \node[term] (lparen) at (2.5, -1.8) {(};
-%         \node[nonterm] (expr) at (4.5, -1.8) {expression};
-%         \node[term] (rparen) at (6.5, -1.8) {)};
-
-%         \draw[->] (in) -- (split); \draw[->] (split) -- (id); \draw[->] (id) -- (join); \draw[->] (join) -- (out);
-%         \draw[->] (split) |- (num); \draw[->] (num) -| (join);
-%         \draw[->] (split) |- (lparen); \draw[->] (lparen) -- (expr); \draw[->] (expr) -- (rparen); \draw[->] (rparen) -| (join);
-%     \end{tikzpicture}
-    
-%     \caption{parse.c に完全準拠した構文図（statement, expression, term, factor）}
-%     \label{fig:syntax_diagrams_perfect}
-% \end{figure}
-
-% \begin{figure}[htbp]
-%     \centering
-%     \tikzset{
-%         % 非終端記号（青色・四角）
-%         nonterm/.style={rectangle, draw=blue!60!black, thick, minimum height=7mm, minimum width=18mm, fill=blue!5, font=\sffamily\small},
-%         % 終端記号（グレー・角丸）
-%         term/.style={rectangle, draw=gray!80, thick, rounded corners=3mm, minimum height=7mm, minimum width=12mm, fill=gray!10, font=\ttfamily\small},
-%         point/.style={coordinate},
-%         >=stealth,
-%         every path/.style={thick, draw=gray!80!black}
-%     }
-
-%     % ==========================================
-%     % 1. statement の構文図 (A4横幅フィット・混線解消版)
-%     % ==========================================
-%     \begin{tikzpicture}[scale=0.85, transform shape]
-%         \node[anchor=east] at (-0.5, 0) {\textbf{statement}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (split) at (0.8,0) {};
-%         \node[point] (join) at (15,0) {};
-%         \node[point] (out) at (15.8,0) {};
-
-%         % --- Route 1: identifier (代入 or 手続き呼び出し) ---
-%         \node[term] (id) at (2.5, 0) {identifier};
-%         \node[point] (p_id) at (4.2, 0) {};
-
-%         % 代入 (Assignment)
-%         \node[term] (assign) at (6, 0.8) {:=};
-%         \node[nonterm] (expr1) at (9, 0.8) {expression};
-
-%         % 手続き呼び出し (Call)
-%         \node[term] (lpar1) at (5.5, -1) {(};
-%         \node[point] (p_c1) at (6.6, -1) {};
-%         \node[nonterm] (expr2) at (8.5, -1) {expression};
-%         \node[point] (p_c2) at (10.4, -1) {};
-%         \node[term] (rpar1) at (11.5, -1) {)};
-%         \node[term] (comma_call) at (8.5, -2.2) {,};
-
-%         % --- Route 2: begin ... end ---
-%         \node[term] (begin) at (2.5, -3.8) {begin};
-%         \node[point] (p_b1) at (4.5, -3.8) {};
-%         \node[nonterm] (stat1) at (7, -3.8) {statement};
-%         \node[point] (p_b2) at (9.5, -3.8) {};
-%         \node[term] (semi) at (7, -5) {;};
-%         \node[term] (end) at (11.5, -3.8) {end};
-
-%         % --- Route 3: write ---
-%         \node[term] (write) at (2.5, -6.8) {write};
-%         \node[point] (p_w1) at (4.2, -6.8) {};
-%         \node[term] (wr_id) at (7, -6.2) {identifier};
-%         \node[term] (wr_num) at (7, -7.4) {number};
-%         \node[point] (p_w2) at (9.8, -6.8) {};
-%         \node[term] (comma_wr) at (7, -8.6) {,};
-
-%         % --- Route 4: if ... then ... else ---
-%         \node[term] (if) at (2, -10.5) {if};
-%         \node[nonterm] (expr_if) at (4, -10.5) {expression};
-%         \node[term] (op_if) at (6.2, -10.5) {rel\_op};
-%         \node[term] (then) at (8, -10.5) {then};
-%         \node[nonterm] (stat2) at (10.2, -10.5) {statement};
-%         \node[point] (p_if_split) at (11.5, -10.5) {};
-%         \node[term] (else) at (12, -11.8) {else};
-%         \node[nonterm] (stat3) at (14.2, -11.8) {statement};
-
-%         % --- Route 5: while ... do ---
-%         \node[term] (while) at (2.2, -13.5) {while};
-%         \node[nonterm] (expr_wh) at (4.6, -13.5) {expression};
-%         \node[term] (op_wh) at (7, -13.5) {rel\_op};
-%         \node[term] (do) at (8.8, -13.5) {do};
-%         \node[nonterm] (stat4) at (11.2, -13.5) {statement};
-
-%         % === 配線処理 ===
-%         \draw[->] (in) -- (split);
-%         \draw[->] (join) -- (out);
-
-%         % Route 1: identifier 共通
-%         \draw[->] (split) -- (id); \draw[->] (id) -- (p_id);
-
-%         % -> 代入ルート
-%         \draw[->] (p_id) |- (assign); \draw[->] (assign) -- (expr1); \draw[->] (expr1) -| (join);
-        
-%         % -> 呼び出しルート
-%         \draw[->] (p_id) |- (lpar1); \draw[->] (lpar1) -- (p_c1); \draw[->] (p_c1) -- (expr2); 
-%         \draw[->] (expr2) -- (p_c2); \draw[->] (p_c2) -- (rpar1); \draw[->] (rpar1) -| (join);
-%         % -> 呼び出し (引数なしバイパス)
-%         \draw[->] (p_c1) |- (8.5, -0.3) -| (p_c2);
-%         % -> 呼び出し (カンマループ、矢印は左向き)
-%         \draw[->] (p_c2) |- (comma_call.east); \draw[->] (comma_call.west) -| (p_c1);
-%         % -> カッコなし単独呼び出しバイパス (直進)
-%         \draw[->] (p_id) -- (join);
-
-%         % Route 2: begin ルート
-%         \draw[->] (split) |- (begin); \draw[->] (begin) -- (p_b1); \draw[->] (p_b1) -- (stat1); 
-%         \draw[->] (stat1) -- (p_b2); \draw[->] (p_b2) -- (end); \draw[->] (end) -| (join);
-%         % -> セミコロンループ
-%         \draw[->] (p_b2) |- (semi.east); \draw[->] (semi.west) -| (p_b1);
-
-%         % Route 3: write ルート
-%         \draw[->] (split) |- (write); \draw[->] (write) -- (p_w1);
-%         \draw[->] (p_w1) |- (wr_id); \draw[->] (p_w1) |- (wr_num);
-%         \draw[->] (wr_id) -| (p_w2); \draw[->] (wr_num) -| (p_w2);
-%         \draw[->] (p_w2) -| (join);
-%         % -> カンマループ
-%         \draw[->] (p_w2) |- (comma_wr.east); \draw[->] (comma_wr.west) -| (p_w1);
-
-%         % Route 4: if ルート
-%         \draw[->] (split) |- (if); \draw[->] (if) -- (expr_if); \draw[->] (expr_if) -- (op_if); 
-%         \draw[->] (op_if) -- (then); \draw[->] (then) -- (stat2); \draw[->] (stat2) -- (p_if_split);
-%         % -> else バイパス (そのまま終了へ)
-%         \draw[->] (p_if_split) -| (join);
-%         % -> else 経由
-%         \draw[->] (p_if_split) |- (else); \draw[->] (else) -- (stat3); \draw[->] (stat3) -| (join);
-
-%         % Route 5: while ルート
-%         \draw[->] (split) |- (while); \draw[->] (while) -- (expr_wh); \draw[->] (expr_wh) -- (op_wh); 
-%         \draw[->] (op_wh) -- (do); \draw[->] (do) -- (stat4); \draw[->] (stat4) -| (join);
-%     \end{tikzpicture}
-
-%     \vspace{0.8cm}
-
-%     \caption{parse.cの実装に完全準拠した構文図（statement, expression, term, factor）}
-%     \label{fig:syntax_diagrams_perfect}
-
-% \end{figure}
-
-% \begin{figure}[htbp]
-
-%     \centering
-%     \tikzset{
-%         % 非終端記号（青色・四角）
-%         nonterm/.style={rectangle, draw=blue!60!black, thick, minimum height=7mm, minimum width=18mm, fill=blue!5, font=\sffamily\small},
-%         % 終端記号（グレー・角丸）
-%         term/.style={rectangle, draw=gray!80, thick, rounded corners=3mm, minimum height=7mm, minimum width=12mm, fill=gray!10, font=\ttfamily\small},
-%         point/.style={coordinate},
-%         >=stealth,
-%         every path/.style={thick, draw=gray!80!black}
-%     }
-
-%     % ==========================================
-%     % 2. expression の構文図 (左向きループバック対応)
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{expression}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (loop_in) at (1,0) {};
-%         \node[nonterm] (t1) at (3.5,0) {term};
-%         \node[point] (loop_out) at (6,0) {};
-%         \node[point] (out) at (7,0) {};
-
-%         \node[term] (plus) at (3.5, -1.2) {+};
-%         \node[term] (minus) at (3.5, -2.4) {-};
-
-%         \draw[->] (in) -- (loop_in); \draw[->] (loop_in) -- (t1);
-%         \draw[->] (t1) -- (loop_out); \draw[->] (loop_out) -- (out);
-        
-%         % 左向きに戻るループ
-%         \draw[->] (loop_out) |- (plus.east); \draw[->] (plus.west) -| (loop_in);
-%         \draw[->] (loop_out) |- (minus.east); \draw[->] (minus.west) -| (loop_in);
-%     \end{tikzpicture}
-
-%     \vspace{0.8cm}
-
-%     % ==========================================
-%     % 3. term の構文図 (左向きループバック対応)
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{term}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (loop_in) at (1,0) {};
-%         \node[nonterm] (f1) at (3.5,0) {factor};
-%         \node[point] (loop_out) at (6,0) {};
-%         \node[point] (out) at (7,0) {};
-
-%         \node[term] (times) at (3.5, -1.2) {*};
-%         \node[term] (div) at (3.5, -2.4) {div};
-
-%         \draw[->] (in) -- (loop_in); \draw[->] (loop_in) -- (f1);
-%         \draw[->] (f1) -- (loop_out); \draw[->] (loop_out) -- (out);
-        
-%         % 左向きに戻るループ
-%         \draw[->] (loop_out) |- (times.east); \draw[->] (times.west) -| (loop_in);
-%         \draw[->] (loop_out) |- (div.east); \draw[->] (div.west) -| (loop_in);
-%     \end{tikzpicture}
-
-%     \vspace{0.8cm}
-
-%     % ==========================================
-%     % 4. factor の構文図
-%     % ==========================================
-%     \begin{tikzpicture}
-%         \node[anchor=east] at (-0.5, 0) {\textbf{factor}};
-%         \node[point] (in) at (0,0) {};
-%         \node[point] (split) at (1,0) {};
-%         \node[point] (join) at (8,0) {};
-%         \node[point] (out) at (9,0) {};
-
-%         \node[term] (id) at (4.5, 1.2) {identifier};
-%         \node[term] (num) at (4.5, 0) {number};
-%         \node[term] (lparen) at (2.5, -1.2) {(};
-%         \node[nonterm] (expr) at (4.5, -1.2) {expression};
-%         \node[term] (rparen) at (6.5, -1.2) {)};
-
-%         \draw[->] (in) -- (split);
-%         \draw[->] (split) |- (id); \draw[->] (id) -| (join);
-%         \draw[->] (split) -- (num); \draw[->] (num) -- (join);
-%         \draw[->] (split) |- (lparen); \draw[->] (lparen) -- (expr); \draw[->] (expr) -- (rparen); \draw[->] (rparen) -| (join);
-%         \draw[->] (join) -- (out);
-%     \end{tikzpicture}
-    
-%     \caption{parse.cの実装に完全準拠した構文図（statement, expression, term, factor）}
-%     \label{fig:syntax_diagrams_perfect}
-% \end{figure}
+% それぞれ実装をブランチを分けて管理していたため、二つのワークディレクトリを圧縮したzipファイルとして提出する。
 
 \end{document}
